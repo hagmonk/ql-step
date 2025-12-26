@@ -44,6 +44,7 @@ This app is intentionally very simple. macOS has similar built-in support for pr
 ## 🐞 Known issues
 
 * Some STEP files don't load. The underlying [foxtrot](https://github.com/Formlabs/foxtrot) library doesn't like them.
+* Some STEP files don't render perfectly. Probably this is also a foxtrot thing, but I could be making a mistake in how I'm loading geometry to SceneKit. More testing against foxtrot is needed. For this app, it's always better to be fast than perfect, but ideally it can be both 😀
 * Very large assemblies can take a long time to load and the extensions get stuck for a bit. Better timeouts could probably protect against this.
 
 ## 🤝 Contributing
