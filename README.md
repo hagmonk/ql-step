@@ -12,19 +12,29 @@ https://github.com/user-attachments/assets/339781d5-3b7b-41c0-b411-d992e49ae5bc
 
 ## 🚧 Requirements
 
-* macOS 14 (Sonoma) or newer
+* macOS 14.6 (Sonoma) or newer
 * M1 or above CPU (Apple Silicon)
 
 ## 💻 Installing
 
-* Download the latest verison from [Releases](https://github.com/johnboiles/quick-look-step/releases) and unzip it
-* Move `QuickLookStep.app` to Applications
-* Open the `QuickLookStep.app`
-* After a few seconds, a macOS notification appears saying an extension has added. Click this notification
-  * If you miss the notification, open System Settings > General > Login Items and Extensions, then click the (i) next to QuickLookStep
-* Turn the switch on for both options under QuickLookStep and click Done
-* Open a Finder window and select a `.step` or `.stp` file. You should be able to preview it from Finder with Quick Look (using spacebar) or see the thumbnail in the sidebar in column view
-* Close the app (it doesn't need to be open for the plugins to work)
+You can either download `QuickLookStep.app` from the [Releases page](https://github.com/johnboiles/quick-look-step/releases) or via Homebrew:
+
+```sh
+brew tap johnboiles/homebrew-tap
+brew install quicklookstep
+```
+
+After installing, open `QuickLookStep.app` once to enable the extensions.
+
+If for some reason the extensions aren't enabled automatically:
+* Open `System Settings` > `General` > `Login Items and Extensions`
+* Click the (i) next to `QuickLookStep`
+* Turn the switch on for both options under `QuickLookStep`
+* Cick `Done`
+
+## 🕶️ Usage
+
+Open a Finder window and select a `.step` or `.stp` file. You should be able to preview it from Finder with Quick Look (using spacebar) or see the thumbnail in the sidebar in column view. `QuickLookStep.app` does _not_ need to be open for the extensions to work.
 
 ## 🐞 Known issues
 
