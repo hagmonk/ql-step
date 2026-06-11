@@ -1,133 +1,124 @@
 # ql-step
 
-> **_Fast_** QuickLook & Finder thumbnail support for STEP (`.step` / `.stp`) 3d model files on macOS.
->
-> Built with Swift + SwiftUI, SceneKit, and [Formlabs/foxtrot](https://github.com/Formlabs/foxtrot).
+> Quick Look & Finder thumbnail support for STEP (`.step` / `.stp`) CAD files
+> on macOS, rendered with OpenCascade and SceneKit (Metal).
 
-Fork of [johnboiles/quick-look-step](https://github.com/johnboiles/quick-look-step) (MIT).
-Changes from upstream:
+Press Space on any STEP file in Finder for an interactive 3D preview —
+rotate, zoom, inspect — and get rendered thumbnails in Finder views. Neither
+requires the app to be running.
 
-* **The mesh backend is OpenCascade** (`occt-bridge/`), the same engine f3d
-  uses — so geometry, assembly placement, and colors match f3d by
-  construction. The bridge mirrors f3d's `vtkF3DOCCTReader`:
-  `STEPCAFControl_Reader` with color mode into an XCAF document,
-  `XCAFPrs::CollectStyleSettings` passed down to faces,
-  `BRepMesh_IncrementalMesh` (0.1 linear / 0.5 angular deflection), per-face
-  `Poly_Triangulation` with instance locations baked into points. Building
-  requires `brew install opencascade`; the needed OCCT dylibs are bundled
-  into the app's `Contents/Frameworks` by `occt-bridge/bundle-occt.sh`
-  (which preserves the sandbox entitlements Quick Look requires when
-  re-signing). Apple Silicon only. Load time for a ~75k-triangle assembly
-  is ~1.3 s — slower than foxtrot, but correct.
-* **Vendored foxtrot remains** as a diagnostic backend
-  (`ffi/examples/dump_colors.rs`) with the fixes below, but the app no
-  longer renders with it: its custom triangulator corrupts swept/NURBS
-  surfaces (e.g. coiled power cords) and its style resolution is partial.
-* **STEP colors render.** foxtrot already resolved `STYLED_ITEM`/`COLOUR_RGB`
-  into per-vertex colors; the FFI layer dropped them. They now cross the
-  boundary (`MeshSlice.colors`) and feed a `.color` `SCNGeometrySource`.
+## Architecture
+
+```
+.step file ──► occt-bridge (OpenCascade) ──► SceneBuilder (SceneKit/Metal)
+               STEPCAFControl_Reader          PBR + image-based lighting
+               XCAF colors & assemblies       OKLab legibility clamp
+               BRepMesh tessellation          interactive preview / thumbnail
+```
+
+### Mesh backend: OpenCascade (`occt-bridge/`)
+
+The bridge converts STEP to flat triangle/normal/color buffers over a C ABI:
+
+* `STEPCAFControl_Reader` with color mode into an XCAF document — assemblies,
+  instance placements, and per-face colors come from the reference STEP
+  implementation, so output matches OCCT-based viewers by construction.
+* `XCAFPrs::CollectStyleSettings` collects document styles, passed down to
+  faces deepest-shape-type-first so a face-level style overrides its solid's.
+* `BRepMesh_IncrementalMesh` (0.1 linear / 0.5 angular deflection)
+  tessellates; per-face `Poly_Triangulation` is emitted with instance
+  locations baked into points, normals rotated by the location transform and
+  flipped for reversed faces, triangle winding corrected likewise.
+* Colors are extracted as sRGB floats per vertex.
+
+Load time for a ~75k-triangle assembly is ~1.3 s.
+
+### Rendering (`QuickLookStep/SceneBuilder.swift`)
+
+* **Physically-based materials** (roughness 0.55) lit by a procedural
+  studio-dome gradient as the `lightingEnvironment` plus a directional
+  headlight. Every orientation is lit coherently — orbiting the model in the
+  preview can't drop faces into blackness.
 * **OKLab legibility clamp.** Body colors are remapped in
-  [OKLab](https://bottosson.github.io/posts/oklab/), hue/chroma preserved:
-  lightness stays faithful across the midrange (exposure is the lighting
-  rig's job, not the albedo's) and only the extremes are softly compressed,
-  so true black stays barely visible against a dark Quick Look panel and
-  white powder-coat stays visible against light Finder backgrounds.
-  Conversion is memoized per unique color.
-* **Physically-based rendering with image-based lighting**, replacing the
-  original omni+ambient Blinn rig (which plunged faces into darkness as soon
-  as the model was orbited in the preview). A procedural studio-dome
-  gradient is the lighting environment plus a directional headlight.
-  Hard-won SceneKit facts encoded in `SceneBuilder`: environment textures
-  must be 2:1 equirectangular or they're silently ignored; the environment
-  image must be drawn with CoreGraphics (AppKit `lockFocus` has no context
-  in the sandboxed headless thumbnail extension); PBR treats omni intensity
-  as lumens with inverse-square falloff so camera-distance omnis contribute
-  nothing (directional = lux, no falloff); and the PBR shader reads RGBA
-  vertex colors — a 3-component color source leaves alpha zero and renders
-  the model black.
-* **foxtrot is vendored**, not a submodule, so parser/triangulator patches are
-  ordinary commits in this repo.
-* **Assembly traversal follows OCCT semantics** (the reference STEP reader
-  behind f3d, `STEPControl_ActorRead`), not argument-order guessing:
-  - Instance edges wrapped in `CONTEXT_DEPENDENT_SHAPE_REPRESENTATION` take
-    parent/child orientation from the `NEXT_ASSEMBLY_USAGE_OCCURRENCE`
-    product hierarchy, with per-edge reversal + inverted transform when the
-    SRR contradicts the NAUO (OCCT `CheckSRRReversesNAUO`).
-  - `ITEM_DEFINED_TRANSFORMATION` axis placements are validated against
-    their representations' item lists and swapped when crossed (OCCT's
-    TEST_MCI_2.step workaround).
-  - Plain transform-free `SHAPE_REPRESENTATION_RELATIONSHIP`s merge both
-    representations into one component ("on prend les 2"), so traversal
-    reaches geometry on either side regardless of argument order. foxtrot
-    previously trusted `rep_1 -> rep_2`, dead-ended at part frames for
-    exporters that write `(brep rep, part frame)`, and fell back to drawing
-    each unique solid once at the origin.
-  The legacy flip-whole-graph heuristic survives only for files that provide
-  no NAUO hierarchy.
-* **Per-face colors.** Vendored foxtrot originally only honored `STYLED_ITEM`s
-  that (a) pointed at a whole solid and (b) carried exactly one style — in
-  real AP214 exports most styles target individual `ADVANCED_FACE`s (a black
-  body with a green LED face and brass contact faces). Style resolution now
-  scans every style at each level and face-level colors override the parent
-  solid's.
-* `ffi/examples/dump_colors.rs` prints the unique vertex colors foxtrot
-  extracts from a file (with counts) for debugging color coverage.
-* `QuickLookStep/libfoxtrot_universal.a` is no longer committed; build it with
-  `make libfoxtrot_universal.a` before `make xcodebuild`.
+  [OKLab](https://bottosson.github.io/posts/oklab/) with hue/chroma
+  preserved: lightness is faithful across the midrange and softly compressed
+  only at the extremes, so true black stays barely visible against a dark
+  Quick Look panel and white powder-coat stays visible against light Finder
+  backgrounds. Conversion is memoized per unique color.
 
-Note on color coverage: STEP files frequently declare more `COLOUR_RGB`
-entities than are visible — interior components (contacts, wiring) carry
-styles too. Compare against `dump_colors` output before assuming colors are
-being dropped.
+### SceneKit/Quick Look facts encoded here
 
-## ✨ What does it do?
+Each of these, violated, renders the model solid black or kills the
+extension — they are easy to rediscover the hard way:
 
-This allows you to **quickly** preview STEP files from Finder before opening them in your CAD tool. It will not render your STEP files as well as your CAD tool, but it will almost certainly open them faster!
+* `lightingEnvironment` textures must be **2:1 equirectangular**; any other
+  aspect is silently ignored.
+* Environment images must be drawn with **CoreGraphics** — AppKit
+  `lockFocus` has no graphics context inside the sandboxed headless
+  thumbnail extension and produces a dead texture.
+* Under PBR, **omni light intensity is lumens with inverse-square falloff**;
+  a camera-distance omni contributes ~nothing. Directional lights are lux
+  with no falloff.
+* The PBR shader reads **RGBA vertex colors**; a 3-component
+  `SCNGeometrySource(.color)` leaves alpha at zero and multiplies the model
+  to black (Blinn tolerates RGB).
+* Re-signing the app **must preserve entitlements**
+  (`codesign --preserve-metadata=entitlements`); stripping the app-sandbox
+  entitlement makes pluginkit silently refuse to launch the extensions.
+* `qlmanage -t` cannot exercise third-party thumbnail extensions ("No
+  sandbox token"); test through `QLThumbnailGenerator` instead.
 
-https://github.com/user-attachments/assets/339781d5-3b7b-41c0-b411-d992e49ae5bc
+### Diagnostic parser (`foxtrot/`, `ffi/`)
 
-## 🚧 Requirements
-
-* macOS 14.6 (Sonoma) or newer
-* M1 or above CPU (Apple Silicon)
-
-## 💻 Installing
-
-You can either download `QuickLookStep.app` from the [Releases page](https://github.com/johnboiles/quick-look-step/releases) or via Homebrew:
+A vendored Rust STEP parser/triangulator used only for diagnostics — the app
+renders exclusively through the OpenCascade bridge.
 
 ```sh
-brew tap johnboiles/homebrew-tap
-brew install quicklookstep
+cargo run --release -p foxtrot_ffi --example dump_colors \
+  --target aarch64-apple-darwin -- file.stp
 ```
 
-After installing, open `QuickLookStep.app` once to enable the extensions.
+prints the unique vertex colors extracted from a file with counts. Note that
+STEP files frequently declare more `COLOUR_RGB` entities than are visible:
+interior components (contacts, wiring) carry styles too. Compare against
+`dump_colors` output before assuming colors are being dropped.
 
-If for some reason the extensions aren't enabled automatically:
-* Open `System Settings` > `General` > `Login Items and Extensions`
-* Click the (i) next to `QuickLookStep`
-* Turn the switch on for both options under `QuickLookStep`
-* Cick `Done`
+## Requirements
 
-## 🕶️ Usage
+* macOS 14.6 (Sonoma) or newer, Apple Silicon
+* Building: Xcode, `brew install opencascade`, and a Rust toolchain +
+  `cbindgen` (diagnostic parser only)
 
-Open a Finder window and select a `.step` or `.stp` file. You should be able to preview it from Finder with Quick Look (using spacebar) or see the thumbnail in the sidebar in column view. `QuickLookStep.app` does _not_ need to be open for the extensions to work.
-
-## 🐞 Known issues
-
-* Some STEP files don't load. The underlying [Foxtrot](https://github.com/Formlabs/foxtrot) library doesn't like them.
-* Some STEP files have holes. Probably this is also a [Foxtrot](https://github.com/Formlabs/foxtrot) thing, but I could also be making a mistake in how I'm loading geometry to SceneKit. More testing against [Foxtrot](https://github.com/Formlabs/foxtrot) is needed. For this app, it's always better to be fast than perfect, but ideally it can be both 😀
-* The examples in the [Foxtrot README.md](https://github.com/Formlabs/foxtrot/blob/master/README.md) suggests Foxtrot supports textures. I don't have that hooked up in SceneKit yet.
-* Very large assemblies can take a long time to load and the extensions get stuck for a bit. Better timeouts could probably protect against this.
-
-## 🔫 Troubleshooting
-
-If you used older versions of `QuickLookStep.app` (especially <v1.5), make sure to delete them and to empty trash (`Finder` -> `Empty Trash...`). I've noticed macOS will sometimes try to use old extensions from the Trash! Then you should restart Finder:
+## Building & installing
 
 ```sh
-killall Finder
+make install        # builds everything, packages, copies to /Applications
 ```
 
-If restarting Finder doesn't make it work, I run this to do everything I know to do to clear the macOS cache:
+which runs:
+
+1. `make occt-bridge` — compiles `libocctbridge.dylib` against Homebrew
+   OpenCascade.
+2. `xcodebuild` (ad-hoc signed, arm64) — app + both extensions.
+3. `occt-bridge/bundle-occt.sh` — copies the transitive OCCT dylib closure
+   into `Contents/Frameworks`, rewrites Homebrew install names to `@rpath`,
+   and re-signs everything inner-out preserving entitlements.
+
+Open `QuickLookStep.app` once to register the extensions. If they don't
+activate automatically: `System Settings` → `General` → `Login Items and
+Extensions` → enable both under `QuickLookStep`.
+
+## Usage
+
+Select any `.step` / `.stp` file in Finder: Space for the interactive
+preview, or see thumbnails in icon/column views. The app itself only needs
+to be opened once, to register the extensions.
+
+## Troubleshooting
+
+Stale extension registrations and thumbnail caches cause most problems —
+macOS will happily keep serving an old build's renders (even from copies in
+the Trash, so empty it after deleting old versions). The full reset:
 
 ```sh
 pluginkit -r -u com.johnboiles.QuickLookStep.StepThumbnail
@@ -141,10 +132,10 @@ killall QuickLookUIService
 killall Finder
 ```
 
-And of course rebooting is also worth trying!
+When developing: never let pluginkit see the appex inside the xcodebuild
+products directory — it can win the election over the `/Applications` copy.
+Install, then delete the build products app.
 
-## 🤝 Contributing
+## License
 
-Let's make this better together. Issues and PRs are welcome.
-
-This project is licensed under the terms of the **MIT License**. Do what you want with it but I don't guarantee it works. If you do something neat with it, I'd always appreciate a shoutout!
+MIT.
