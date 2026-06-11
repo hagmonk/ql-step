@@ -17,12 +17,31 @@ if [ ! -d "$APP" ]; then
     exit 1
 fi
 
+registered() {
+    pluginkit -m -i "$THUMBNAIL" 2>/dev/null | grep -q . &&
+        pluginkit -m -i "$PREVIEW" 2>/dev/null | grep -q .
+}
+
+attempt_registration() {
+    # Launching through LaunchServices is the most reliable registration
+    # path; pluginkit -a alone sometimes doesn't take after an election
+    # was dropped
+    open -g "$APP"
+    sleep 2
+    pluginkit -a "$APP"
+    sleep 1
+}
+
 echo "Registering extensions from $APP"
-# Launching through LaunchServices is the most reliable registration path;
-# pluginkit -a alone sometimes doesn't take after an election was dropped
-open -g "$APP"
-sleep 2
-pluginkit -a "$APP"
+attempt_registration
+if ! registered; then
+    # pkd (the plugin daemon) caches elections and can wedge after
+    # repeated installs/upgrades; restart it and try once more
+    echo "Registration didn't take; restarting the plugin daemon and retrying"
+    pkill -9 pkd 2>/dev/null
+    sleep 3
+    attempt_registration
+fi
 
 echo "Flushing Quick Look caches"
 qlmanage -r >/dev/null 2>&1

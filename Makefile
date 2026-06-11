@@ -51,3 +51,4 @@ release: xcodebuild
 	gh release create v$(VERSION) QuickLookStep-$(VERSION).zip \
 	  --title "v$(VERSION)" --notes "OpenCascade-backed Quick Look previews and thumbnails for STEP files."
 	rm -f QuickLookStep-$(VERSION).zip
+	rm -rf $(APP)   # or pluginkit elects the build-dir appex over /Applications
