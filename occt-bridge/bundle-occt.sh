@@ -44,6 +44,10 @@ for lib in "$FRAMEWORKS"/*.dylib; do
     codesign --force --sign - "$lib"
 done
 
+# Bundle the registration script so installers (e.g. the Homebrew cask
+# postflight) can invoke it from inside the app
+cp -f "$BRIDGE_DIR/../scripts/register-quicklook.sh" "$APP/Contents/Resources/"
+
 # Re-sign inner-out: extensions, then the app. QL extensions must keep their
 # app-sandbox entitlement or pluginkit refuses to launch them.
 for appex in "$APP"/Contents/PlugIns/*.appex; do

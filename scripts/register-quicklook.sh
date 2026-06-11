@@ -18,6 +18,10 @@ if [ ! -d "$APP" ]; then
 fi
 
 echo "Registering extensions from $APP"
+# Launching through LaunchServices is the most reliable registration path;
+# pluginkit -a alone sometimes doesn't take after an election was dropped
+open -g "$APP"
+sleep 2
 pluginkit -a "$APP"
 
 echo "Flushing Quick Look caches"
