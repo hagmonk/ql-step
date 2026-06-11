@@ -6,6 +6,11 @@
 typedef struct MeshSlice {
   const float *verts;
   const float *normals;
+  /**
+   * Per-vertex linear RGB color from STEP STYLED_ITEM/COLOUR_RGB entities.
+   * Unstyled geometry defaults to (0.5, 0.5, 0.5) upstream.
+   */
+  const float *colors;
   const uint32_t *tris;
   uintptr_t vert_count;
   uintptr_t tri_count;

@@ -1,8 +1,31 @@
-# QuickLookStep.app
+# ql-step
 
 > **_Fast_** QuickLook & Finder thumbnail support for STEP (`.step` / `.stp`) 3d model files on macOS.
 >
 > Built with Swift + SwiftUI, SceneKit, and [Formlabs/foxtrot](https://github.com/Formlabs/foxtrot).
+
+Fork of [johnboiles/quick-look-step](https://github.com/johnboiles/quick-look-step) (MIT).
+Changes from upstream:
+
+* **STEP colors render.** foxtrot already resolved `STYLED_ITEM`/`COLOUR_RGB`
+  into per-vertex colors; the FFI layer dropped them. They now cross the
+  boundary (`MeshSlice.colors`) and feed a `.color` `SCNGeometrySource`.
+* **OKLab legibility squeeze.** Body colors are remapped in
+  [OKLab](https://bottosson.github.io/posts/oklab/) so lightness lands in
+  `[0.34, 0.82]` with hue/chroma preserved — pure-white powder-coat models stay
+  visible on a light Finder background, black bodies stay visible in a dark
+  Quick Look panel. Conversion is memoized per unique color.
+* **foxtrot is vendored**, not a submodule, so parser/triangulator patches are
+  ordinary commits in this repo.
+* `ffi/examples/dump_colors.rs` prints the unique vertex colors foxtrot
+  extracts from a file (with counts) for debugging color coverage.
+* `QuickLookStep/libfoxtrot_universal.a` is no longer committed; build it with
+  `make libfoxtrot_universal.a` before `make xcodebuild`.
+
+Note on color coverage: STEP files frequently declare more `COLOUR_RGB`
+entities than are visible — interior components (contacts, wiring) carry
+styles too. Compare against `dump_colors` output before assuming colors are
+being dropped.
 
 ## ✨ What does it do?
 

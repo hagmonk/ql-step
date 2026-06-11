@@ -8,6 +8,91 @@ import Quartz
 /// extension so thumbnails and previews look identical before any user
 /// interaction.
 enum SceneBuilder {
+
+    // MARK: - OKLab color handling
+
+    /// Lightness band the model body is squeezed into so geometry stays
+    /// legible against both the light (Finder) and dark (Quick Look panel
+    /// in dark mode) backgrounds. Pure-white bodies compress down to the
+    /// top of the band, near-black bodies float up to the bottom.
+    private static let lightnessBand: ClosedRange<Float> = 0.34...0.82
+
+    /// sRGB -> OKLab, per https://bottosson.github.io/posts/oklab/
+    private static func srgbToOKLab(_ r: Float, _ g: Float, _ b: Float) -> (L: Float, a: Float, b: Float) {
+        func toLinear(_ c: Float) -> Float {
+            c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        let lr = toLinear(r), lg = toLinear(g), lb = toLinear(b)
+
+        let l = cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb)
+        let m = cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb)
+        let s = cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb)
+
+        return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+    }
+
+    /// OKLab -> linear sRGB (SceneKit expects linear components in raw vertex
+    /// data; it only color-matches NSColor/CGColor inputs).
+    private static func oklabToLinearSRGB(_ L: Float, _ a: Float, _ b: Float) -> (r: Float, g: Float, b: Float) {
+        let l3 = L + 0.3963377774 * a + 0.2158037573 * b
+        let m3 = L - 0.1055613458 * a - 0.0638541728 * b
+        let s3 = L - 0.0894841775 * a - 1.2914855480 * b
+        let l = l3 * l3 * l3, m = m3 * m3 * m3, s = s3 * s3 * s3
+
+        func clamp01(_ c: Float) -> Float { min(max(c, 0), 1) }
+        return (clamp01( 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+                clamp01(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+                clamp01(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s))
+    }
+
+    /// Remaps one STEP body color into the legible lightness band, keeping
+    /// hue and chroma. Input is sRGB-encoded (STEP COLOUR_RGB convention),
+    /// output is linear for the GPU.
+    private static func legibleLinearColor(_ r: Float, _ g: Float, _ b: Float) -> (Float, Float, Float) {
+        let lab = srgbToOKLab(r, g, b)
+        let span = lightnessBand.upperBound - lightnessBand.lowerBound
+        let squeezedL = lightnessBand.lowerBound + lab.L * span
+        return oklabToLinearSRGB(squeezedL, lab.a, lab.b)
+    }
+
+    /// Builds the per-vertex color buffer for SceneKit from the raw foxtrot
+    /// colors, deduplicating the conversion since STEP files style whole
+    /// bodies (a handful of unique colors across the whole mesh).
+    private static func colorSource(from mesh: MeshSlice, vertexCount: Int) -> SCNGeometrySource? {
+        guard let raw = mesh.colors else { return nil }
+
+        var converted: [UInt64: (Float, Float, Float)] = [:]
+        var out = [Float](repeating: 0, count: vertexCount * 3)
+        for i in 0..<vertexCount {
+            let r = raw[i * 3], g = raw[i * 3 + 1], b = raw[i * 3 + 2]
+            let key = UInt64(r.bitPattern) << 42 ^ UInt64(g.bitPattern) << 21 ^ UInt64(b.bitPattern)
+            let c: (Float, Float, Float)
+            if let cached = converted[key] {
+                c = cached
+            } else {
+                c = legibleLinearColor(r, g, b)
+                converted[key] = c
+            }
+            out[i * 3] = c.0
+            out[i * 3 + 1] = c.1
+            out[i * 3 + 2] = c.2
+        }
+
+        let data = out.withUnsafeBufferPointer { Data(buffer: $0) }
+        return SCNGeometrySource(
+            data: data,
+            semantic: .color,
+            vectorCount: vertexCount,
+            usesFloatComponents: true,
+            componentsPerVector: 3,
+            bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0,
+            dataStride: 3 * MemoryLayout<Float>.size
+        )
+    }
+
     /// Builds a SceneKit scene containing the geometry loaded from the STEP
     /// file at `url`.
     /// - Throws: An `NSError` if the STEP file cannot be parsed by the Rust
@@ -60,9 +145,15 @@ enum SceneBuilder {
             bytesPerIndex: MemoryLayout<UInt32>.size
         )
 
-        let geometry = SCNGeometry(sources: [vertexSource], elements: [geometryElement])
+        var sources = [vertexSource]
+        if let colors = colorSource(from: mesh, vertexCount: vertexCount) {
+            sources.append(colors)
+        }
+
+        let geometry = SCNGeometry(sources: sources, elements: [geometryElement])
         geometry.firstMaterial = SCNMaterial()
         geometry.firstMaterial?.lightingModel = .blinn
+        // Vertex colors modulate diffuse; white keeps them unscaled.
         geometry.firstMaterial?.diffuse.contents = NSColor.white
         geometry.firstMaterial?.isDoubleSided = true
 
@@ -137,4 +228,4 @@ enum SceneBuilder {
 
         return scene
     }
-} 
+}

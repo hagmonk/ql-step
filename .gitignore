@@ -160,3 +160,5 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+# Built from ffi/ via make libfoxtrot_universal.a
+QuickLookStep/libfoxtrot_universal.a
