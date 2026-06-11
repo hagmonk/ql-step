@@ -12,9 +12,6 @@
 		42E196E62E25781E009F11FB /* StepThumbnail.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 42E196D92E25781D009F11FB /* StepThumbnail.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		42E196F12E257832009F11FB /* Quartz.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 42E196DD2E25781E009F11FB /* Quartz.framework */; };
 		42E196FE2E257832009F11FB /* StepPreview.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 42E196F02E257832009F11FB /* StepPreview.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		42EF487C2E25818200C63E21 /* libfoxtrot_universal.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 42EF487B2E25818200C63E21 /* libfoxtrot_universal.a */; };
-		42EF487D2E25818200C63E21 /* libfoxtrot_universal.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 42EF487B2E25818200C63E21 /* libfoxtrot_universal.a */; };
-		42EF487E2E25818200C63E21 /* libfoxtrot_universal.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 42EF487B2E25818200C63E21 /* libfoxtrot_universal.a */; };
 		42EF489F2E25C9A300C63E21 /* SceneBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */; };
 		42EF48A02E25C9A300C63E21 /* SceneBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */; };
 		42EF48A12E25C9A300C63E21 /* SceneBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */; };
@@ -58,8 +55,6 @@
 		42E196DB2E25781E009F11FB /* QuickLookThumbnailing.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLookThumbnailing.framework; path = System/Library/Frameworks/QuickLookThumbnailing.framework; sourceTree = SDKROOT; };
 		42E196DD2E25781E009F11FB /* Quartz.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Quartz.framework; path = System/Library/Frameworks/Quartz.framework; sourceTree = SDKROOT; };
 		42E196F02E257832009F11FB /* StepPreview.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = StepPreview.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		42EF487A2E25818200C63E21 /* foxtrot.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = foxtrot.h; sourceTree = "<group>"; };
-		42EF487B2E25818200C63E21 /* libfoxtrot_universal.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libfoxtrot_universal.a; sourceTree = "<group>"; };
 		42EF487F2E25824600C63E21 /* Shared-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Shared-Bridging-Header.h"; sourceTree = "<group>"; };
 		42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneBuilder.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -120,7 +115,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				42EF487E2E25818200C63E21 /* libfoxtrot_universal.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -128,7 +122,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				42EF487D2E25818200C63E21 /* libfoxtrot_universal.a in Frameworks */,
 				42E196DC2E25781E009F11FB /* QuickLookThumbnailing.framework in Frameworks */,
 				42E196DE2E25781E009F11FB /* Quartz.framework in Frameworks */,
 			);
@@ -138,7 +131,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				42EF487C2E25818200C63E21 /* libfoxtrot_universal.a in Frameworks */,
 				42E196F12E257832009F11FB /* Quartz.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -174,8 +166,6 @@
 			children = (
 				42E196DB2E25781E009F11FB /* QuickLookThumbnailing.framework */,
 				42E196DD2E25781E009F11FB /* Quartz.framework */,
-				42EF487A2E25818200C63E21 /* foxtrot.h */,
-				42EF487B2E25818200C63E21 /* libfoxtrot_universal.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";

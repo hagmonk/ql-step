@@ -68,26 +68,15 @@ extension — they are easy to rediscover the hard way:
 * `qlmanage -t` cannot exercise third-party thumbnail extensions ("No
   sandbox token"); test through `QLThumbnailGenerator` instead.
 
-### Diagnostic parser (`foxtrot/`, `ffi/`)
-
-A vendored Rust STEP parser/triangulator used only for diagnostics — the app
-renders exclusively through the OpenCascade bridge.
-
-```sh
-cargo run --release -p foxtrot_ffi --example dump_colors \
-  --target aarch64-apple-darwin -- file.stp
-```
-
-prints the unique vertex colors extracted from a file with counts. Note that
-STEP files frequently declare more `COLOUR_RGB` entities than are visible:
-interior components (contacts, wiring) carry styles too. Compare against
-`dump_colors` output before assuming colors are being dropped.
+Note on color coverage: STEP files frequently declare more `COLOUR_RGB`
+entities than are visible — interior components (contacts, wiring) carry
+styles too. Check what the file declares (`grep -c COLOUR_RGB file.stp`)
+before assuming colors are being dropped.
 
 ## Requirements
 
 * macOS 14.6 (Sonoma) or newer, Apple Silicon
-* Building: Xcode, `brew install opencascade`, and a Rust toolchain +
-  `cbindgen` (diagnostic parser only)
+* Building: Xcode and `brew install opencascade`
 
 ## Building & installing
 

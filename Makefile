@@ -1,23 +1,6 @@
 OCCT_PREFIX ?= /opt/homebrew/opt/opencascade
 APP := build/Build/Products/Release/QuickLookStep.app
 
-.PHONY: foxtrot.h
-foxtrot.h:
-	cbindgen ffi -o QuickLookStep/foxtrot.h -l c
-
-.PHONY: libfoxtrot_universal.a
-libfoxtrot_universal.a:
-	cargo build --release --target aarch64-apple-darwin -p foxtrot_ffi
-	cargo build --release --target x86_64-apple-darwin -p foxtrot_ffi
-	lipo -create \
-    target/x86_64-apple-darwin/release/libfoxtrot_ffi.a \
-    target/aarch64-apple-darwin/release/libfoxtrot_ffi.a \
-    -output QuickLookStep/libfoxtrot_universal.a
-
-.PHONY: test-foxtrot
-test-foxtrot:
-	cd foxtrot && cargo run --release -- examples/cube_hole.step
-
 # OpenCascade mesh backend — the same engine f3d uses, so geometry, assembly
 # placement, and colors match f3d by construction.
 .PHONY: occt-bridge
@@ -32,7 +15,7 @@ occt-bridge:
 	  -o occt-bridge/libocctbridge.dylib
 
 .PHONY: xcodebuild
-xcodebuild: libfoxtrot_universal.a occt-bridge
+xcodebuild: occt-bridge
 	xcodebuild \
 	  -project QuickLookStep/QuickLookStep.xcodeproj \
 	  -scheme QuickLookStep \
