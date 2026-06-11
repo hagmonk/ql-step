@@ -7,6 +7,22 @@
 Fork of [johnboiles/quick-look-step](https://github.com/johnboiles/quick-look-step) (MIT).
 Changes from upstream:
 
+* **The mesh backend is OpenCascade** (`occt-bridge/`), the same engine f3d
+  uses — so geometry, assembly placement, and colors match f3d by
+  construction. The bridge mirrors f3d's `vtkF3DOCCTReader`:
+  `STEPCAFControl_Reader` with color mode into an XCAF document,
+  `XCAFPrs::CollectStyleSettings` passed down to faces,
+  `BRepMesh_IncrementalMesh` (0.1 linear / 0.5 angular deflection), per-face
+  `Poly_Triangulation` with instance locations baked into points. Building
+  requires `brew install opencascade`; the needed OCCT dylibs are bundled
+  into the app's `Contents/Frameworks` by `occt-bridge/bundle-occt.sh`
+  (which preserves the sandbox entitlements Quick Look requires when
+  re-signing). Apple Silicon only. Load time for a ~75k-triangle assembly
+  is ~1.3 s — slower than foxtrot, but correct.
+* **Vendored foxtrot remains** as a diagnostic backend
+  (`ffi/examples/dump_colors.rs`) with the fixes below, but the app no
+  longer renders with it: its custom triangulator corrupts swept/NURBS
+  surfaces (e.g. coiled power cords) and its style resolution is partial.
 * **STEP colors render.** foxtrot already resolved `STYLED_ITEM`/`COLOUR_RGB`
   into per-vertex colors; the FFI layer dropped them. They now cross the
   boundary (`MeshSlice.colors`) and feed a `.color` `SCNGeometrySource`.

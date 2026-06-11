@@ -60,10 +60,10 @@ enum SceneBuilder {
         return oklabToLinearSRGB(softClampLightness(lab.L), lab.a, lab.b)
     }
 
-    /// Builds the per-vertex color buffer for SceneKit from the raw foxtrot
+    /// Builds the per-vertex color buffer for SceneKit from the raw bridge
     /// colors, deduplicating the conversion since STEP files style whole
     /// bodies (a handful of unique colors across the whole mesh).
-    private static func colorSource(from mesh: MeshSlice, vertexCount: Int) -> SCNGeometrySource? {
+    private static func colorSource(from mesh: OcctMesh, vertexCount: Int) -> SCNGeometrySource? {
         guard let raw = mesh.colors else { return nil }
 
         var converted: [UInt64: (Float, Float, Float)] = [:]
@@ -101,14 +101,14 @@ enum SceneBuilder {
     /// - Throws: An `NSError` if the STEP file cannot be parsed by the Rust
     ///           backend.
     static func scene(for url: URL) throws -> SCNScene {
-        // --- Load via FFI and measure duration ---
-        var mesh = MeshSlice()
+        // --- Load via the OpenCascade bridge and measure duration ---
+        var mesh = OcctMesh()
         let start = CFAbsoluteTimeGetCurrent()
         let ok = url.path.withCString { cPath in
-            foxtrot_load_step(cPath, &mesh)
+            occt_load_step(cPath, &mesh)
         }
         let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
-        NSLog("foxtrot_load_step(%@) -> %@ in %.2f ms", url.path, ok ? "OK" : "FAIL", elapsedMs)
+        NSLog("occt_load_step(%@) -> %@ in %.2f ms", url.path, ok ? "OK" : "FAIL", elapsedMs)
         guard ok else {
             throw NSError(
                 domain: "SceneBuilder",
@@ -116,7 +116,7 @@ enum SceneBuilder {
                 userInfo: [NSLocalizedDescriptionKey: "Failed to load STEP file"]
             )
         }
-        defer { foxtrot_free_mesh(mesh) }
+        defer { occt_free_mesh(mesh) }
 
         // Build SceneKit geometry from the raw buffers.
         let vertexCount = Int(mesh.vert_count)
