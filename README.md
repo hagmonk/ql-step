@@ -121,13 +121,13 @@ macOS will happily keep serving an old build's renders (even from copies in
 the Trash, so empty it after deleting old versions). The full reset:
 
 ```sh
-pluginkit -r -u com.johnboiles.QuickLookStep.StepThumbnail
-pluginkit -r -u com.johnboiles.QuickLookStep.StepPreview
+pluginkit -r -u com.hagmonk.QLStep.StepThumbnail
+pluginkit -r -u com.hagmonk.QLStep.StepPreview
 pluginkit -a /Applications/QuickLookStep.app
 qlmanage -r
 qlmanage -r cache
-pluginkit -e use -i com.johnboiles.QuickLookStep.StepThumbnail
-pluginkit -e use -i com.johnboiles.QuickLookStep.StepPreview
+pluginkit -e use -i com.hagmonk.QLStep.StepThumbnail
+pluginkit -e use -i com.hagmonk.QLStep.StepPreview
 killall QuickLookUIService
 killall Finder
 ```

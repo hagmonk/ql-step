@@ -13,7 +13,7 @@
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.johnboiles.step</string>
+				<string>com.hagmonk.step</string>
 			</array>
 			<key>LSTypeIsPackage</key>
 			<false/>
@@ -33,7 +33,7 @@
 			<key>UTTypeIcons</key>
 			<dict/>
 			<key>UTTypeIdentifier</key>
-			<string>com.johnboiles.step</string>
+			<string>com.hagmonk.step</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
@@ -58,7 +58,7 @@
 			<key>UTTypeDescription</key>
 			<string>STEP File (ISO 10303-21)</string>
 			<key>UTTypeIdentifier</key>
-			<string>com.johnboiles.step</string>
+			<string>com.hagmonk.step</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

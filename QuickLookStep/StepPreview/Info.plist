@@ -14,7 +14,7 @@
 				<string>com.shapr3d.step</string>
 				<string>com.shapr3d.stp</string>
 				<string>a360.step</string>
-				<string>com.johnboiles.step</string>
+				<string>com.hagmonk.step</string>
 			</array>
 			<key>QLSupportsSearchableItems</key>
 			<false/>
