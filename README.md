@@ -19,6 +19,12 @@ Changes from upstream:
   Conversion is memoized per unique color.
 * **foxtrot is vendored**, not a submodule, so parser/triangulator patches are
   ordinary commits in this repo.
+* **Assembly traversal survives both SRR argument orders.** Some exporters
+  write `SHAPE_REPRESENTATION_RELATIONSHIP(brep rep, part frame)`, others the
+  reverse. foxtrot trusted `rep_1 -> rep_2`, so for half the files its BFS
+  dead-ended at the part frame, lost every instance transform, and fell back
+  to drawing each unique solid once at the origin. Edges are now oriented
+  toward the representation that carries mesh-bearing items.
 * **Per-face colors.** Vendored foxtrot originally only honored `STYLED_ITEM`s
   that (a) pointed at a whole solid and (b) carried exactly one style — in
   real AP214 exports most styles target individual `ADVANCED_FACE`s (a black

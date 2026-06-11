@@ -97,13 +97,24 @@ pub fn triangulate(s: &StepFile) -> (Mesh, Stats) {
     }
 
     // Store a map of ShapeRepresentationRelationships, which some models
-    // use to map from axes to specific instances
+    // use to map from axes to specific instances. Exporters disagree on
+    // argument order — SOLIDWORKS writes (part frame, brep rep), others
+    // write (brep rep, part frame) — so orient each edge toward the side
+    // that carries mesh-bearing items; trusting rep_1 -> rep_2 dead-ends
+    // the traversal at the part frame and every instance transform is lost.
+    let mesh_bearing = |r: Representation| matches!(&s[r],
+        Entity::AdvancedBrepShapeRepresentation(_)
+        | Entity::ManifoldSurfaceShapeRepresentation(_));
     let mut shape_rep_relationship: HashMap<Id<_>, Vec<Id<_>>> = HashMap::new();
     for (r1, r2) in s.0.iter()
         .filter_map(|e| ShapeRepresentationRelationship_::try_from_entity(e))
         .map(|e| (e.rep_1, e.rep_2))
     {
-        shape_rep_relationship.entry(r1).or_default().push(r2);
+        if mesh_bearing(r1) && !mesh_bearing(r2) {
+            shape_rep_relationship.entry(r2).or_default().push(r1);
+        } else {
+            shape_rep_relationship.entry(r1).or_default().push(r2);
+        }
     }
 
     let mut to_mesh: HashMap<Id<_>, Vec<_>> = HashMap::new();
