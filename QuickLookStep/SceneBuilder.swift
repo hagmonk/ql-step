@@ -11,15 +11,17 @@ enum SceneBuilder {
 
     // MARK: - OKLab color handling
 
-    /// OKLab lightness is passed through unchanged across the legible
-    /// midrange and only compressed at the extremes, so a black power cord
-    /// still reads black next to a gray body — but pure black stays visible
+    /// OKLab lightness mapping tuned against f3d's exposure of the same
+    /// models: a contrast curve deepens the midtones (CAD exporters style
+    /// "black" fittings as 50% gray, which f3d renders near-black), then the
+    /// extremes are softly compressed so true black stays barely visible
     /// against a dark Quick Look panel and pure-white powder-coat stays
     /// visible against a light Finder background.
     private static func softClampLightness(_ L: Float) -> Float {
-        if L < 0.30 { return 0.22 + (L / 0.30) * 0.08 }
-        if L > 0.80 { return 0.80 + ((L - 0.80) / 0.20) * 0.06 }
-        return L
+        let contrasted = pow(L, 1.5)
+        if contrasted < 0.30 { return 0.12 + (contrasted / 0.30) * 0.18 }
+        if contrasted > 0.80 { return 0.80 + ((contrasted - 0.80) / 0.20) * 0.06 }
+        return contrasted
     }
 
     /// sRGB -> OKLab, per https://bottosson.github.io/posts/oklab/
@@ -219,14 +221,17 @@ enum SceneBuilder {
             lightNode.position = position
             return lightNode
         }
-        scene.rootNode.addChildNode(makeOmni(intensity: 850, position: cameraNode.position))
-        scene.rootNode.addChildNode(makeOmni(intensity: 700, position: SCNVector3(0, 0, -targetSize * 2)))
+        // Key + dim fill + low ambient floor: a strong ambient washes the
+        // midtones up and erases the contrast between a white body and its
+        // dark-gray fittings (f3d renders the same colors much darker).
+        scene.rootNode.addChildNode(makeOmni(intensity: 950, position: cameraNode.position))
+        scene.rootNode.addChildNode(makeOmni(intensity: 400, position: SCNVector3(0, 0, -targetSize * 2)))
 
         let ambientNode = SCNNode()
         ambientNode.light = SCNLight()
         ambientNode.light?.type = .ambient
         ambientNode.light?.color = NSColor(white: 1, alpha: 1)
-        ambientNode.light?.intensity = 300
+        ambientNode.light?.intensity = 100
         scene.rootNode.addChildNode(ambientNode)
 
         return scene

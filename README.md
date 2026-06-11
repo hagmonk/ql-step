@@ -26,13 +26,15 @@ Changes from upstream:
 * **STEP colors render.** foxtrot already resolved `STYLED_ITEM`/`COLOUR_RGB`
   into per-vertex colors; the FFI layer dropped them. They now cross the
   boundary (`MeshSlice.colors`) and feed a `.color` `SCNGeometrySource`.
-* **OKLab legibility clamp.** Body colors are remapped in
-  [OKLab](https://bottosson.github.io/posts/oklab/): lightness passes through
-  unchanged across the legible midrange and is compressed only at the
-  extremes, hue/chroma preserved — a black power cord still reads black next
-  to a gray body, but pure black stays visible against a dark Quick Look
-  panel and white powder-coat stays visible against light Finder backgrounds.
-  Conversion is memoized per unique color.
+* **OKLab legibility curve.** Body colors are remapped in
+  [OKLab](https://bottosson.github.io/posts/oklab/), hue/chroma preserved:
+  a contrast curve (`L^1.5`) deepens midtones to match f3d's exposure of the
+  same models — CAD exporters style "black" fittings as 50% gray — then the
+  extremes are softly compressed so true black stays barely visible against
+  a dark Quick Look panel and white powder-coat stays visible against light
+  Finder backgrounds. Paired with a low ambient floor (100 vs the original
+  300) so the curve isn't washed back out by lighting. Conversion is
+  memoized per unique color.
 * **foxtrot is vendored**, not a submodule, so parser/triangulator patches are
   ordinary commits in this repo.
 * **Assembly traversal follows OCCT semantics** (the reference STEP reader
