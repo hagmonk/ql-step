@@ -26,15 +26,25 @@ Changes from upstream:
 * **STEP colors render.** foxtrot already resolved `STYLED_ITEM`/`COLOUR_RGB`
   into per-vertex colors; the FFI layer dropped them. They now cross the
   boundary (`MeshSlice.colors`) and feed a `.color` `SCNGeometrySource`.
-* **OKLab legibility curve.** Body colors are remapped in
+* **OKLab legibility clamp.** Body colors are remapped in
   [OKLab](https://bottosson.github.io/posts/oklab/), hue/chroma preserved:
-  a contrast curve (`L^1.5`) deepens midtones to match f3d's exposure of the
-  same models — CAD exporters style "black" fittings as 50% gray — then the
-  extremes are softly compressed so true black stays barely visible against
-  a dark Quick Look panel and white powder-coat stays visible against light
-  Finder backgrounds. Paired with a low ambient floor (100 vs the original
-  300) so the curve isn't washed back out by lighting. Conversion is
-  memoized per unique color.
+  lightness stays faithful across the midrange (exposure is the lighting
+  rig's job, not the albedo's) and only the extremes are softly compressed,
+  so true black stays barely visible against a dark Quick Look panel and
+  white powder-coat stays visible against light Finder backgrounds.
+  Conversion is memoized per unique color.
+* **Physically-based rendering with image-based lighting**, replacing the
+  original omni+ambient Blinn rig (which plunged faces into darkness as soon
+  as the model was orbited in the preview). A procedural studio-dome
+  gradient is the lighting environment plus a directional headlight.
+  Hard-won SceneKit facts encoded in `SceneBuilder`: environment textures
+  must be 2:1 equirectangular or they're silently ignored; the environment
+  image must be drawn with CoreGraphics (AppKit `lockFocus` has no context
+  in the sandboxed headless thumbnail extension); PBR treats omni intensity
+  as lumens with inverse-square falloff so camera-distance omnis contribute
+  nothing (directional = lux, no falloff); and the PBR shader reads RGBA
+  vertex colors — a 3-component color source leaves alpha zero and renders
+  the model black.
 * **foxtrot is vendored**, not a submodule, so parser/triangulator patches are
   ordinary commits in this repo.
 * **Assembly traversal follows OCCT semantics** (the reference STEP reader

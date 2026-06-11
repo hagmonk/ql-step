@@ -11,17 +11,15 @@ enum SceneBuilder {
 
     // MARK: - OKLab color handling
 
-    /// OKLab lightness mapping tuned against f3d's exposure of the same
-    /// models: a contrast curve deepens the midtones (CAD exporters style
-    /// "black" fittings as 50% gray, which f3d renders near-black), then the
-    /// extremes are softly compressed so true black stays barely visible
-    /// against a dark Quick Look panel and pure-white powder-coat stays
-    /// visible against a light Finder background.
+    /// OKLab lightness stays faithful to the file across the midrange —
+    /// exposure is the lighting rig's job, not the albedo's — and is only
+    /// compressed at the extremes so true black stays barely visible against
+    /// a dark Quick Look panel and pure-white powder-coat stays visible
+    /// against a light Finder background.
     private static func softClampLightness(_ L: Float) -> Float {
-        let contrasted = pow(L, 1.5)
-        if contrasted < 0.30 { return 0.12 + (contrasted / 0.30) * 0.18 }
-        if contrasted > 0.80 { return 0.80 + ((contrasted - 0.80) / 0.20) * 0.06 }
-        return contrasted
+        if L < 0.30 { return 0.12 + (L / 0.30) * 0.18 }
+        if L > 0.85 { return 0.85 + ((L - 0.85) / 0.15) * 0.05 }
+        return L
     }
 
     /// sRGB -> OKLab, per https://bottosson.github.io/posts/oklab/
@@ -68,8 +66,11 @@ enum SceneBuilder {
     private static func colorSource(from mesh: OcctMesh, vertexCount: Int) -> SCNGeometrySource? {
         guard let raw = mesh.colors else { return nil }
 
+        // RGBA, not RGB: the physically-based shader reads a 4-component
+        // color; a 3-component source leaves alpha undefined (zero) and the
+        // whole model multiplies to black.
         var converted: [UInt64: (Float, Float, Float)] = [:]
-        var out = [Float](repeating: 0, count: vertexCount * 3)
+        var out = [Float](repeating: 1, count: vertexCount * 4)
         for i in 0..<vertexCount {
             let r = raw[i * 3], g = raw[i * 3 + 1], b = raw[i * 3 + 2]
             let key = UInt64(r.bitPattern) << 42 ^ UInt64(g.bitPattern) << 21 ^ UInt64(b.bitPattern)
@@ -80,9 +81,9 @@ enum SceneBuilder {
                 c = legibleLinearColor(r, g, b)
                 converted[key] = c
             }
-            out[i * 3] = c.0
-            out[i * 3 + 1] = c.1
-            out[i * 3 + 2] = c.2
+            out[i * 4] = c.0
+            out[i * 4 + 1] = c.1
+            out[i * 4 + 2] = c.2
         }
 
         let data = out.withUnsafeBufferPointer { Data(buffer: $0) }
@@ -91,10 +92,10 @@ enum SceneBuilder {
             semantic: .color,
             vectorCount: vertexCount,
             usesFloatComponents: true,
-            componentsPerVector: 3,
+            componentsPerVector: 4,
             bytesPerComponent: MemoryLayout<Float>.size,
             dataOffset: 0,
-            dataStride: 3 * MemoryLayout<Float>.size
+            dataStride: 4 * MemoryLayout<Float>.size
         )
     }
 
@@ -156,11 +157,17 @@ enum SceneBuilder {
         }
 
         let geometry = SCNGeometry(sources: sources, elements: [geometryElement])
-        geometry.firstMaterial = SCNMaterial()
-        geometry.firstMaterial?.lightingModel = .blinn
+        let material = SCNMaterial()
+        // PBR + image-based lighting (below) keeps every orientation lit the
+        // way f3d's environment lighting does — point lights alone plunge
+        // faces into shadow as soon as the user orbits the model.
+        material.lightingModel = .physicallyBased
+        material.roughness.contents = 0.55
+        material.metalness.contents = 0.05
         // Vertex colors modulate diffuse; white keeps them unscaled.
-        geometry.firstMaterial?.diffuse.contents = NSColor.white
-        geometry.firstMaterial?.isDoubleSided = true
+        material.diffuse.contents = NSColor.white
+        material.isDoubleSided = true
+        geometry.firstMaterial = material
 
         // Assemble the scene graph.
         let scene = SCNScene()
@@ -213,27 +220,50 @@ enum SceneBuilder {
         scene.rootNode.addChildNode(cameraNode)
 
         // --- Lighting ---
-        func makeOmni(intensity: CGFloat, position: SCNVector3) -> SCNNode {
-            let lightNode = SCNNode()
-            lightNode.light = SCNLight()
-            lightNode.light?.type = .omni
-            lightNode.light?.intensity = intensity
-            lightNode.position = position
-            return lightNode
+        // Studio-dome image-based lighting: bright zenith, mid horizon, dark
+        // ground. Lights every orientation coherently (rotating the model in
+        // the preview can't plunge a face into blackness) and gives the same
+        // tonal range f3d's environment lighting produces. A modest key omni
+        // at the camera adds definition on top.
+        if let environment = studioEnvironment() {
+            scene.lightingEnvironment.contents = environment
+            scene.lightingEnvironment.intensity = 1.2
         }
-        // Key + dim fill + low ambient floor: a strong ambient washes the
-        // midtones up and erases the contrast between a white body and its
-        // dark-gray fittings (f3d renders the same colors much darker).
-        scene.rootNode.addChildNode(makeOmni(intensity: 950, position: cameraNode.position))
-        scene.rootNode.addChildNode(makeOmni(intensity: 400, position: SCNVector3(0, 0, -targetSize * 2)))
-
-        let ambientNode = SCNNode()
-        ambientNode.light = SCNLight()
-        ambientNode.light?.type = .ambient
-        ambientNode.light?.color = NSColor(white: 1, alpha: 1)
-        ambientNode.light?.intensity = 100
-        scene.rootNode.addChildNode(ambientNode)
+        // Directional headlight: PBR treats omni intensity as lumens with
+        // inverse-square falloff, so a camera-distance omni contributes
+        // nothing; directional lights don't attenuate (intensity = lux).
+        let keyNode = SCNNode()
+        keyNode.light = SCNLight()
+        keyNode.light?.type = .directional
+        keyNode.light?.intensity = 700
+        keyNode.position = cameraNode.position
+        keyNode.look(at: SCNVector3Zero)
+        scene.rootNode.addChildNode(keyNode)
 
         return scene
+    }
+
+    /// Vertical gray gradient used as the lighting environment — a cheap
+    /// procedural studio dome. Drawn with CoreGraphics directly: AppKit's
+    /// lockFocus path has no graphics context inside the sandboxed headless
+    /// thumbnail extension and yields a dead (black) environment texture.
+    private static func studioEnvironment() -> CGImage? {
+        // 2:1 aspect — SceneKit only accepts equirectangular environment
+        // textures with this ratio and silently ignores anything else
+        let width = 256, height = 128
+        guard let ctx = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        for y in 0..<height {
+            // bottom row = ground (dark), top row = zenith (bright)
+            let t = CGFloat(y) / CGFloat(height - 1)
+            let white = 0.18 + t * (1.00 - 0.18)
+            ctx.setFillColor(CGColor(gray: white, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: y, width: width, height: 1))
+        }
+        return ctx.makeImage()
     }
 }
