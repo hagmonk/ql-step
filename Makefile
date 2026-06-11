@@ -32,4 +32,10 @@ xcodebuild: occt-bridge
 install: xcodebuild
 	rm -rf /Applications/QuickLookStep.app
 	cp -R $(APP) /Applications/
-	open /Applications/QuickLookStep.app
+	./scripts/register-quicklook.sh
+
+# Re-register the Quick Look extensions without rebuilding — fixes stale
+# registrations, cached thumbnails, and "preview stopped working" states.
+.PHONY: register
+register:
+	./scripts/register-quicklook.sh

@@ -92,10 +92,11 @@ which runs:
 3. `occt-bridge/bundle-occt.sh` — copies the transitive OCCT dylib closure
    into `Contents/Frameworks`, rewrites Homebrew install names to `@rpath`,
    and re-signs everything inner-out preserving entitlements.
+4. `scripts/register-quicklook.sh` — registers and enables both extensions,
+   flushes Quick Look caches, and restarts the Quick Look services.
 
-Open `QuickLookStep.app` once to register the extensions. If they don't
-activate automatically: `System Settings` → `General` → `Login Items and
-Extensions` → enable both under `QuickLookStep`.
+If the extensions still don't activate: `System Settings` → `General` →
+`Login Items and Extensions` → enable both under `QuickLookStep`.
 
 ## Usage
 
@@ -107,23 +108,19 @@ to be opened once, to register the extensions.
 
 Stale extension registrations and thumbnail caches cause most problems —
 macOS will happily keep serving an old build's renders (even from copies in
-the Trash, so empty it after deleting old versions). The full reset:
+the Trash, so empty it after deleting old versions). The fix:
 
 ```sh
-pluginkit -r -u com.hagmonk.QLStep.StepThumbnail
-pluginkit -r -u com.hagmonk.QLStep.StepPreview
-pluginkit -a /Applications/QuickLookStep.app
-qlmanage -r
-qlmanage -r cache
-pluginkit -e use -i com.hagmonk.QLStep.StepThumbnail
-pluginkit -e use -i com.hagmonk.QLStep.StepPreview
-killall QuickLookUIService
-killall Finder
+make register       # or: ./scripts/register-quicklook.sh
 ```
+
+which re-registers both extensions with pluginkit, flushes the Quick Look
+caches (`qlmanage -r` / `qlmanage -r cache`), and restarts
+`QuickLookUIService`, `quicklookd`, and Finder.
 
 When developing: never let pluginkit see the appex inside the xcodebuild
 products directory — it can win the election over the `/Applications` copy.
-Install, then delete the build products app.
+Install, then delete the build products app (`make install` handles this).
 
 ## License
 
