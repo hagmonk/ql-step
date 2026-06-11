@@ -19,12 +19,23 @@ Changes from upstream:
   Conversion is memoized per unique color.
 * **foxtrot is vendored**, not a submodule, so parser/triangulator patches are
   ordinary commits in this repo.
-* **Assembly traversal survives both SRR argument orders.** Some exporters
-  write `SHAPE_REPRESENTATION_RELATIONSHIP(brep rep, part frame)`, others the
-  reverse. foxtrot trusted `rep_1 -> rep_2`, so for half the files its BFS
-  dead-ended at the part frame, lost every instance transform, and fell back
-  to drawing each unique solid once at the origin. Edges are now oriented
-  toward the representation that carries mesh-bearing items.
+* **Assembly traversal follows OCCT semantics** (the reference STEP reader
+  behind f3d, `STEPControl_ActorRead`), not argument-order guessing:
+  - Instance edges wrapped in `CONTEXT_DEPENDENT_SHAPE_REPRESENTATION` take
+    parent/child orientation from the `NEXT_ASSEMBLY_USAGE_OCCURRENCE`
+    product hierarchy, with per-edge reversal + inverted transform when the
+    SRR contradicts the NAUO (OCCT `CheckSRRReversesNAUO`).
+  - `ITEM_DEFINED_TRANSFORMATION` axis placements are validated against
+    their representations' item lists and swapped when crossed (OCCT's
+    TEST_MCI_2.step workaround).
+  - Plain transform-free `SHAPE_REPRESENTATION_RELATIONSHIP`s merge both
+    representations into one component ("on prend les 2"), so traversal
+    reaches geometry on either side regardless of argument order. foxtrot
+    previously trusted `rep_1 -> rep_2`, dead-ended at part frames for
+    exporters that write `(brep rep, part frame)`, and fell back to drawing
+    each unique solid once at the origin.
+  The legacy flip-whole-graph heuristic survives only for files that provide
+  no NAUO hierarchy.
 * **Per-face colors.** Vendored foxtrot originally only honored `STYLED_ITEM`s
   that (a) pointed at a whole solid and (b) carried exactly one style — in
   real AP214 exports most styles target individual `ADVANCED_FACE`s (a black

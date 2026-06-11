@@ -23,35 +23,161 @@ use nurbs::{BSplineSurface, SampledCurve, SampledSurface, NURBSSurface, KnotVect
 const SAVE_DEBUG_SVGS: bool = false;
 const SAVE_PANIC_SVGS: bool = false;
 
-/// `TransformStack` is a mapping of representations to transformed children.
-type TransformStack<'a> =
-    HashMap<Representation<'a>, Vec<(Representation<'a>, DMat4)>>;
-fn build_transform_stack<'a>(s: &'a StepFile, flip: bool) -> TransformStack<'a> {
-    // Store a map of parent -> (child, transform)
-    let mut transform_stack: HashMap<_, Vec<_>> = HashMap::new();
-    for r in s.0.iter()
-        .filter_map(|e|
-            RepresentationRelationshipWithTransformation_::try_from_entity(e))
-    {
-        let (a, b) = if flip {
-            (r.rep_2, r.rep_1)
-        } else {
-            (r.rep_1, r.rep_2)
-        };
-        let mut mat = item_defined_transformation(s, r.transformation_operator.cast());
-        if flip {
-            mat = mat.try_inverse().expect("Could not invert transform matrix");
-        }
+/// `TransformStack` maps representation ids to transformed children.
+/// Keys are raw entity ids so that plain-SRR merging (union-find) can
+/// canonicalize them.
+type TransformStack = HashMap<usize, Vec<(usize, DMat4)>>;
 
-        transform_stack.entry(b)
-            .or_default()
-            .push((a, mat));
+/// Union-find over raw entity ids, used to merge representations related by
+/// plain SHAPE_REPRESENTATION_RELATIONSHIPs (no transform), which declare
+/// that two representations describe the same shape in the same frame.
+/// OCCT transfers both sides of such a relationship ("on prend les 2",
+/// STEPControl_ActorRead::TransferEntity); merging makes the traversal reach
+/// geometry on either side regardless of argument order.
+fn uf_find(uf: &mut HashMap<usize, usize>, x: usize) -> usize {
+    let mut root = x;
+    while let Some(&p) = uf.get(&root) {
+        if p == root { break; }
+        root = p;
     }
-    transform_stack
+    let mut cur = x;
+    while cur != root {
+        let p = uf[&cur];
+        uf.insert(cur, root);
+        cur = p;
+    }
+    root
 }
 
-fn transform_stack_roots<'a>(transform_stack: &TransformStack<'a>) -> Vec<Representation<'a>> {
-    let children: HashSet<_> = transform_stack
+fn uf_union(uf: &mut HashMap<usize, usize>, a: usize, b: usize) {
+    let ra = uf_find(uf, a);
+    let rb = uf_find(uf, b);
+    if ra != rb {
+        uf.insert(ra, rb);
+    }
+}
+
+/// Maps each representation to its PRODUCT_DEFINITION by walking
+/// SHAPE_DEFINITION_REPRESENTATION -> PRODUCT_DEFINITION_SHAPE (or plain
+/// PROPERTY_DEFINITION) -> definition. Mirrors the lookup in OCCT's
+/// STEPConstruct_Assembly::CheckSRRReversesNAUO.
+fn rep_product_definitions(s: &StepFile) -> HashMap<usize, usize> {
+    let mut out = HashMap::new();
+    for sdr in s.0.iter()
+        .filter_map(ShapeDefinitionRepresentation_::try_from_entity)
+    {
+        let pd = s.entity(sdr.definition.cast::<ProductDefinitionShape_>())
+            .map(|pds| pds.definition.0)
+            .or_else(|| s.entity(sdr.definition.cast::<PropertyDefinition_>())
+                .map(|p| p.definition.0));
+        if let Some(pd) = pd {
+            out.insert(sdr.used_representation.0, pd);
+        }
+    }
+    out
+}
+
+/// True if `item` appears in the representation's item list.
+fn rep_contains_item(s: &StepFile, rep: Representation, item: usize) -> bool {
+    match &s[rep] {
+        Entity::ShapeRepresentation(b) =>
+            b.items.iter().any(|i| i.0 == item),
+        Entity::AdvancedBrepShapeRepresentation(b) =>
+            b.items.iter().any(|i| i.0 == item),
+        Entity::ManifoldSurfaceShapeRepresentation(b) =>
+            b.items.iter().any(|i| i.0 == item),
+        _ => false,
+    }
+}
+
+/// Computes the instance transform for a RRWT, validating that each axis
+/// placement of the ITEM_DEFINED_TRANSFORMATION belongs to its declared
+/// representation and inverting when both are crossed — the same per-edge
+/// correction OCCT applies in STEPControl_ActorRead::ComputeTransformation
+/// (": abv 31.10.01: TEST_MCI_2.step").
+fn checked_item_defined_transformation(
+    s: &StepFile, r: &RepresentationRelationshipWithTransformation_,
+) -> DMat4 {
+    let mat = item_defined_transformation(s, r.transformation_operator.cast());
+    if let Some(idt) = s.entity(
+        r.transformation_operator.cast::<ItemDefinedTransformation_>())
+    {
+        let i1 = idt.transform_item_1.0;
+        let i2 = idt.transform_item_2.0;
+        let swapped =
+            !rep_contains_item(s, r.rep_1, i1)
+            && !rep_contains_item(s, r.rep_2, i2)
+            && rep_contains_item(s, r.rep_1, i2)
+            && rep_contains_item(s, r.rep_2, i1);
+        if swapped {
+            warn!("Axis placements are swapped in RRWT; corrected");
+            return mat.try_inverse()
+                .expect("Could not invert swapped transform matrix");
+        }
+    }
+    mat
+}
+
+/// Builds parent -> (child, transform) edges. For relationships wrapped in a
+/// CONTEXT_DEPENDENT_SHAPE_REPRESENTATION the parent/child orientation comes
+/// from the NEXT_ASSEMBLY_USAGE_OCCURRENCE product hierarchy (relating =
+/// assembly, related = component) exactly as OCCT does, instead of trusting
+/// SRR argument order. Returns the stack plus whether any NAUO-backed edge
+/// was found (files without them keep the legacy multiple-roots flip).
+fn build_transform_stack(s: &StepFile) -> (TransformStack, bool) {
+    let rep_pd = rep_product_definitions(s);
+    let mut stack: TransformStack = HashMap::new();
+    let mut covered: HashSet<usize> = HashSet::new();
+    let mut nauo_oriented = false;
+
+    for cdsr in s.0.iter()
+        .filter_map(ContextDependentShapeRepresentation_::try_from_entity)
+    {
+        let rr = cdsr.representation_relation;
+        let Some(rrwt) = s.entity(
+            rr.cast::<RepresentationRelationshipWithTransformation_>())
+        else { continue };
+        covered.insert(rr.0);
+
+        let mut mat = checked_item_defined_transformation(s, rrwt);
+        // Default per ISO 10303: rep_1 is the component, rep_2 the assembly
+        let (mut parent, mut child) = (rrwt.rep_2, rrwt.rep_1);
+        if let Some(nauo) = s.entity(cdsr.represented_product_relation)
+            .and_then(|pds| s.entity(
+                pds.definition.cast::<NextAssemblyUsageOccurrence_>()))
+        {
+            nauo_oriented = true;
+            let related = nauo.related_product_definition.0;
+            let relating = nauo.relating_product_definition.0;
+            if rep_pd.get(&rrwt.rep_2.0) == Some(&related)
+                && rep_pd.get(&rrwt.rep_1.0) == Some(&relating)
+            {
+                warn!("SRR reverses relation defined by NAUO; \
+                       NAUO definition is taken");
+                parent = rrwt.rep_1;
+                child = rrwt.rep_2;
+                mat = mat.try_inverse()
+                    .expect("Could not invert reversed transform matrix");
+            }
+        }
+        stack.entry(parent.0).or_default().push((child.0, mat));
+    }
+
+    // RRWTs not wrapped in any CDSR keep the legacy rep_2 -> rep_1 edge
+    for (i, rrwt) in s.0.iter().enumerate()
+        .filter_map(|(i, e)|
+            RepresentationRelationshipWithTransformation_::try_from_entity(e)
+                .map(|r| (i, r)))
+    {
+        if covered.contains(&i) { continue; }
+        let mat = checked_item_defined_transformation(s, rrwt);
+        stack.entry(rrwt.rep_2.0).or_default().push((rrwt.rep_1.0, mat));
+    }
+    (stack, nauo_oriented)
+}
+
+fn transform_stack_roots(transform_stack: &TransformStack) -> Vec<usize> {
+    let children: HashSet<usize> = transform_stack
         .values()
         .flat_map(|v| v.iter())
         .map(|v| v.0)
@@ -77,63 +203,88 @@ pub fn triangulate(s: &StepFile) -> (Mesh, Stats) {
         })
         .collect();
 
-    // Store a map of parent -> (child, transform)
-    let mut transform_stack = build_transform_stack(s, false);
+    // Parent -> (child, transform) edges, oriented by the NAUO product
+    // hierarchy where the file provides one
+    let (raw_stack, nauo_oriented) = build_transform_stack(s);
+
+    // Merge representations related by plain (transform-free) SRRs into
+    // components; both sides describe the same shape in the same frame
+    let mut uf: HashMap<usize, usize> = HashMap::new();
+    let mut rep_ids: HashSet<usize> = HashSet::new();
+    for srr in s.0.iter()
+        .filter_map(ShapeRepresentationRelationship_::try_from_entity)
+    {
+        uf_union(&mut uf, srr.rep_1.0, srr.rep_2.0);
+        rep_ids.insert(srr.rep_1.0);
+        rep_ids.insert(srr.rep_2.0);
+    }
+    for (parent, children) in &raw_stack {
+        rep_ids.insert(*parent);
+        for (child, _) in children {
+            rep_ids.insert(*child);
+        }
+    }
+    let mut members: HashMap<usize, Vec<usize>> = HashMap::new();
+    for id in &rep_ids {
+        members.entry(uf_find(&mut uf, *id)).or_default().push(*id);
+    }
+
+    // Canonicalize the transform stack onto component representatives
+    let mut transform_stack: TransformStack = HashMap::new();
+    for (parent, children) in raw_stack {
+        let p = uf_find(&mut uf, parent);
+        for (child, mat) in children {
+            let c = uf_find(&mut uf, child);
+            if c != p {
+                transform_stack.entry(p).or_default().push((c, mat));
+            }
+        }
+    }
+
     let mut roots = transform_stack_roots(&transform_stack);
-    // The transformation graph isn't directional (because STEP is a Good File
-    // Format), so if it's got more than one root, assume it's backwards.  We
-    // are assuming that directions in the graph are consistent within the file,
-    // until we find a counterexample.
-    if roots.len() > 1 {
+    // Files that don't provide a NAUO product hierarchy give no reliable
+    // edge orientation; keep the legacy heuristic of flipping the whole
+    // graph when it has multiple roots.
+    if roots.len() > 1 && !nauo_oriented {
         info!("Flipping transform stack");
-        transform_stack = build_transform_stack(s, true);
+        let mut flipped: TransformStack = HashMap::new();
+        for (parent, children) in transform_stack {
+            for (child, mat) in children {
+                let inv = mat.try_inverse()
+                    .expect("Could not invert transform matrix");
+                flipped.entry(child).or_default().push((parent, inv));
+            }
+        }
+        transform_stack = flipped;
         roots = transform_stack_roots(&transform_stack);
     }
-    let mut todo: Vec<_> = roots.into_iter()
+    let mut todo: Vec<(usize, DMat4)> = roots.into_iter()
         .map(|v| (v, DMat4::identity()))
         .collect();
     if todo.len() > 1 {
         warn!("Transformation stack has more than one root!");
     }
 
-    // Store a map of ShapeRepresentationRelationships, which some models
-    // use to map from axes to specific instances. Exporters disagree on
-    // argument order — SOLIDWORKS writes (part frame, brep rep), others
-    // write (brep rep, part frame) — so orient each edge toward the side
-    // that carries mesh-bearing items; trusting rep_1 -> rep_2 dead-ends
-    // the traversal at the part frame and every instance transform is lost.
-    let mesh_bearing = |r: Representation| matches!(&s[r],
-        Entity::AdvancedBrepShapeRepresentation(_)
-        | Entity::ManifoldSurfaceShapeRepresentation(_));
-    let mut shape_rep_relationship: HashMap<Id<_>, Vec<Id<_>>> = HashMap::new();
-    for (r1, r2) in s.0.iter()
-        .filter_map(|e| ShapeRepresentationRelationship_::try_from_entity(e))
-        .map(|e| (e.rep_1, e.rep_2))
-    {
-        if mesh_bearing(r1) && !mesh_bearing(r2) {
-            shape_rep_relationship.entry(r2).or_default().push(r1);
-        } else {
-            shape_rep_relationship.entry(r1).or_default().push(r2);
-        }
-    }
-
     let mut to_mesh: HashMap<Id<_>, Vec<_>> = HashMap::new();
-    while let Some((id, mat)) = todo.pop() {
-        for child in shape_rep_relationship.get(&id).unwrap_or(&vec![]) {
-            todo.push((*child, mat));
-        }
-        if let Some(children) = transform_stack.get(&id) {
+    while let Some((cid, mat)) = todo.pop() {
+        if let Some(children) = transform_stack.get(&cid) {
             for (child, next_mat) in children {
                 todo.push((*child, mat * next_mat));
             }
-        } else {
-            // Bind this transform to the RepresentationItem, which is
-            // either a ManifoldSolidBrep or a ShellBasedSurfaceModel
-            let items = match &s[id] {
+        }
+        // Bind mesh-bearing items of every representation in this component
+        // (assemblies may carry their own geometry alongside child instances)
+        let singleton = [cid];
+        let component = members.get(&cid)
+            .map(|v| v.as_slice())
+            .unwrap_or(&singleton);
+        for rep in component {
+            let rep: Representation = Id::new(*rep);
+            let items = match &s[rep] {
                 Entity::AdvancedBrepShapeRepresentation(b) => &b.items,
                 Entity::ShapeRepresentation(b) => &b.items,
                 Entity::ManifoldSurfaceShapeRepresentation(b) => &b.items,
-                e => panic!("Could not get shape from {:?}", e),
+                _ => continue,
             };
 
             for m in items.iter() {
