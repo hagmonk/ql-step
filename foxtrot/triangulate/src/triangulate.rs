@@ -64,19 +64,17 @@ fn transform_stack_roots<'a>(transform_stack: &TransformStack<'a>) -> Vec<Repres
 }
 
 pub fn triangulate(s: &StepFile) -> (Mesh, Stats) {
-    let styled_items: Vec<_> = s.0.iter()
-        .filter_map(|e| MechanicalDesignGeometricPresentationRepresentation_::try_from_entity(e))
-        .flat_map(|m| m.items.iter())
-        .filter_map(|item| s.entity(item.cast::<StyledItem_>()))
-        .collect();
-    let brep_colors: HashMap<_, DVec3> = styled_items.iter()
-        .filter_map(|styled|
-            if styled.styles.len() != 1 {
-                None
-            } else {
-                presentation_style_color(s, styled.styles[0])
-                    .map(|c| (styled.item, c))
-            })
+    // Collect every STYLED_ITEM in the file, not just the ones reachable via
+    // MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION. Targets are
+    // commonly individual ADVANCED_FACEs, not just whole solids, so key the
+    // map by raw entity id and let lookups happen at both granularities.
+    let item_colors: HashMap<usize, DVec3> = s.0.iter()
+        .filter_map(StyledItem_::try_from_entity)
+        .filter_map(|styled| {
+            styled.styles.iter()
+                .find_map(|style| presentation_style_color(s, *style))
+                .map(|c| (styled.item.0, c))
+        })
         .collect();
 
     // Store a map of parent -> (child, transform)
@@ -171,27 +169,31 @@ pub fn triangulate(s: &StepFile) -> (Mesh, Stats) {
             |(mut mesh, mut stats), (id, mats)| {
                 let v_start = mesh.verts.len();
                 let t_start = mesh.triangles.len();
+
+                // The solid-level style, if any, is the default; individual
+                // faces styled directly override it inside the shell walkers.
+                let color = item_colors.get(&id.0)
+                    .map(|c| *c)
+                    .unwrap_or(DVec3::new(0.5, 0.5, 0.5));
+
                 match &s[*id] {
                     Entity::ManifoldSolidBrep(b) =>
-                        closed_shell(s, b.outer, &mut mesh, &mut stats),
+                        closed_shell(s, b.outer, &mut mesh, &mut stats,
+                                     &item_colors, color),
                     Entity::ShellBasedSurfaceModel(b) =>
                         for v in &b.sbsm_boundary {
-                            shell(s, *v, &mut mesh, &mut stats);
+                            shell(s, *v, &mut mesh, &mut stats,
+                                  &item_colors, color);
                         },
                     Entity::BrepWithVoids(b) =>
                         // TODO: handle voids
-                        closed_shell(s, b.outer, &mut mesh, &mut stats),
+                        closed_shell(s, b.outer, &mut mesh, &mut stats,
+                                     &item_colors, color),
                     _ => {
                         warn!("Skipping {:?} (not a known solid)", s[*id]);
                         return (mesh, stats);
                     },
                 };
-
-                // Pick out a color from the color map and apply it to each
-                // newly-created vertex
-                let color = brep_colors.get(id)
-                    .map(|c| *c)
-                    .unwrap_or(DVec3::new(0.5, 0.5, 0.5));
 
                 // Build copies of the mesh by copying and applying transforms
                 let v_end = mesh.verts.len();
@@ -205,6 +207,7 @@ pub fn triangulate(s: &StepFile) -> (Mesh, Stats) {
                         let n = mesh.verts[v].norm;
                         let norm = (mat * glm::vec3_to_vec4(&n)).xyz();
 
+                        let color = mesh.verts[v].color;
                         mesh.verts.push(mesh::Vertex { pos, norm, color });
                     }
                     let offset = mesh.verts.len() - v_end;
@@ -225,8 +228,6 @@ pub fn triangulate(s: &StepFile) -> (Mesh, Stats) {
 
                     let n = mesh.verts[v].norm;
                     mesh.verts[v].norm = (mat * glm::vec3_to_vec4(&n)).xyz();
-
-                    mesh.verts[v].color = color;
                 }
                 (mesh, stats)
             });
@@ -271,38 +272,34 @@ fn item_defined_transformation(s: &StepFile, t: Id<ItemDefinedTransformation_>) 
 fn presentation_style_color(s: &StepFile, p: PresentationStyleAssignment)
     -> Option<DVec3>
 {
-    // AAAAAHHHHH
-    s.entity(p)
-        .and_then(|p: &PresentationStyleAssignment_| {
-                let mut surf = p.styles.iter().filter_map(|y| {
-                    // This is an ambiguous parse, so we hard-code the first
-                    // Entity item in the enum
-                    use PresentationStyleSelect::PreDefinedPresentationStyle;
-                    if let PreDefinedPresentationStyle(u) = y {
-                        s.entity(u.cast::<SurfaceStyleUsage_>())
-                    } else {
-                        None
-                    }});
-                let out = surf.next();
-                out
-            })
-        .and_then(|surf: &SurfaceStyleUsage_|
+    // Walk PRESENTATION_STYLE_ASSIGNMENT -> SURFACE_STYLE_USAGE ->
+    // SURFACE_SIDE_STYLE -> SURFACE_STYLE_FILL_AREA -> FILL_AREA_STYLE ->
+    // FILL_AREA_STYLE_COLOUR -> COLOUR_RGB, scanning every style at each
+    // level instead of bailing when an assignment carries more than one
+    // (files routinely pair a fill style with a curve style).
+    s.entity(p)?.styles.iter()
+        .filter_map(|y| {
+            // This is an ambiguous parse, so we hard-code the first
+            // Entity item in the enum
+            use PresentationStyleSelect::PreDefinedPresentationStyle;
+            if let PreDefinedPresentationStyle(u) = y {
+                s.entity(u.cast::<SurfaceStyleUsage_>())
+            } else {
+                None
+            }})
+        .filter_map(|surf: &SurfaceStyleUsage_|
             s.entity(surf.style.cast::<SurfaceSideStyle_>()))
-        .and_then(|surf: &SurfaceSideStyle_| if surf.styles.len() != 1 {
-                None
-            } else {
-                s.entity(surf.styles[0].cast::<SurfaceStyleFillArea_>())
-            })
-        .map(|surf: &SurfaceStyleFillArea_|
-            s.entity(surf.fill_area).expect("Could not get fill_area"))
-        .and_then(|fill: &FillAreaStyle_| if fill.fill_styles.len() != 1 {
-                None
-            } else {
-                s.entity(fill.fill_styles[0].cast::<FillAreaStyleColour_>())
-            })
-        .and_then(|f: &FillAreaStyleColour_|
+        .flat_map(|side: &SurfaceSideStyle_| side.styles.iter())
+        .filter_map(|style|
+            s.entity(style.cast::<SurfaceStyleFillArea_>()))
+        .filter_map(|surf: &SurfaceStyleFillArea_|
+            s.entity(surf.fill_area))
+        .flat_map(|fill: &FillAreaStyle_| fill.fill_styles.iter())
+        .filter_map(|fs| s.entity(fs.cast::<FillAreaStyleColour_>()))
+        .filter_map(|f: &FillAreaStyleColour_|
             s.entity(f.fill_colour.cast::<ColourRgb_>()))
         .map(|c| DVec3::new(c.red, c.green, c.blue))
+        .next()
 }
 
 fn cartesian_point(s: &StepFile, a: Id<CartesianPoint_>) -> DVec3 {
@@ -329,32 +326,47 @@ fn axis2_placement_3d(s: &StepFile, t: Id<Axis2Placement3d_>) -> (DVec3, DVec3, 
     (location, axis, ref_direction)
 }
 
-fn shell(s: &StepFile, c: Shell, mesh: &mut Mesh, stats: &mut Stats) {
+fn shell(s: &StepFile, c: Shell, mesh: &mut Mesh, stats: &mut Stats,
+         colors: &HashMap<usize, DVec3>, default_color: DVec3) {
     match &s[c] {
-        Entity::ClosedShell(_) => closed_shell(s, c.cast(), mesh, stats),
-        Entity::OpenShell(_) => open_shell(s, c.cast(), mesh, stats),
+        Entity::ClosedShell(_) =>
+            closed_shell(s, c.cast(), mesh, stats, colors, default_color),
+        Entity::OpenShell(_) =>
+            open_shell(s, c.cast(), mesh, stats, colors, default_color),
         h => warn!("Skipping {:?} (unknown Shell type)", h),
     }
 }
 
-fn open_shell(s: &StepFile, c: OpenShell, mesh: &mut Mesh, stats: &mut Stats) {
+fn open_shell(s: &StepFile, c: OpenShell, mesh: &mut Mesh, stats: &mut Stats,
+              colors: &HashMap<usize, DVec3>, default_color: DVec3) {
     let cs = s.entity(c).expect("Could not get OpenShell");
     for face in &cs.cfs_faces {
-        if let Err(err) = advanced_face(s, face.cast(), mesh, stats) {
-            error!("Failed to triangulate {:?}: {}", s[*face], err);
-        }
+        face_with_color(s, *face, mesh, stats, colors, default_color);
     }
     stats.num_shells += 1;
 }
 
-fn closed_shell(s: &StepFile, c: ClosedShell, mesh: &mut Mesh, stats: &mut Stats) {
+fn closed_shell(s: &StepFile, c: ClosedShell, mesh: &mut Mesh, stats: &mut Stats,
+                colors: &HashMap<usize, DVec3>, default_color: DVec3) {
     let cs = s.entity(c).expect("Could not get ClosedShell");
     for face in &cs.cfs_faces {
-        if let Err(err) = advanced_face(s, face.cast(), mesh, stats) {
-            error!("Failed to triangulate {:?}: {}", s[*face], err);
-        }
+        face_with_color(s, *face, mesh, stats, colors, default_color);
     }
     stats.num_shells += 1;
+}
+
+/// Triangulates one face, then paints its new vertices with the face's own
+/// STYLED_ITEM color when present, falling back to the parent solid's color.
+fn face_with_color(s: &StepFile, face: Face, mesh: &mut Mesh, stats: &mut Stats,
+                   colors: &HashMap<usize, DVec3>, default_color: DVec3) {
+    let v_start = mesh.verts.len();
+    if let Err(err) = advanced_face(s, face.cast(), mesh, stats) {
+        error!("Failed to triangulate {:?}: {}", s[face], err);
+    }
+    let color = colors.get(&face.0).copied().unwrap_or(default_color);
+    for v in &mut mesh.verts[v_start..] {
+        v.color = color;
+    }
 }
 
 fn advanced_face(s: &StepFile, f: AdvancedFace, mesh: &mut Mesh,

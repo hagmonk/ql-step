@@ -10,13 +10,21 @@ Changes from upstream:
 * **STEP colors render.** foxtrot already resolved `STYLED_ITEM`/`COLOUR_RGB`
   into per-vertex colors; the FFI layer dropped them. They now cross the
   boundary (`MeshSlice.colors`) and feed a `.color` `SCNGeometrySource`.
-* **OKLab legibility squeeze.** Body colors are remapped in
-  [OKLab](https://bottosson.github.io/posts/oklab/) so lightness lands in
-  `[0.34, 0.82]` with hue/chroma preserved — pure-white powder-coat models stay
-  visible on a light Finder background, black bodies stay visible in a dark
-  Quick Look panel. Conversion is memoized per unique color.
+* **OKLab legibility clamp.** Body colors are remapped in
+  [OKLab](https://bottosson.github.io/posts/oklab/): lightness passes through
+  unchanged across the legible midrange and is compressed only at the
+  extremes, hue/chroma preserved — a black power cord still reads black next
+  to a gray body, but pure black stays visible against a dark Quick Look
+  panel and white powder-coat stays visible against light Finder backgrounds.
+  Conversion is memoized per unique color.
 * **foxtrot is vendored**, not a submodule, so parser/triangulator patches are
   ordinary commits in this repo.
+* **Per-face colors.** Vendored foxtrot originally only honored `STYLED_ITEM`s
+  that (a) pointed at a whole solid and (b) carried exactly one style — in
+  real AP214 exports most styles target individual `ADVANCED_FACE`s (a black
+  body with a green LED face and brass contact faces). Style resolution now
+  scans every style at each level and face-level colors override the parent
+  solid's.
 * `ffi/examples/dump_colors.rs` prints the unique vertex colors foxtrot
   extracts from a file (with counts) for debugging color coverage.
 * `QuickLookStep/libfoxtrot_universal.a` is no longer committed; build it with

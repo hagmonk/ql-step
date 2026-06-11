@@ -11,11 +11,16 @@ enum SceneBuilder {
 
     // MARK: - OKLab color handling
 
-    /// Lightness band the model body is squeezed into so geometry stays
-    /// legible against both the light (Finder) and dark (Quick Look panel
-    /// in dark mode) backgrounds. Pure-white bodies compress down to the
-    /// top of the band, near-black bodies float up to the bottom.
-    private static let lightnessBand: ClosedRange<Float> = 0.34...0.82
+    /// OKLab lightness is passed through unchanged across the legible
+    /// midrange and only compressed at the extremes, so a black power cord
+    /// still reads black next to a gray body — but pure black stays visible
+    /// against a dark Quick Look panel and pure-white powder-coat stays
+    /// visible against a light Finder background.
+    private static func softClampLightness(_ L: Float) -> Float {
+        if L < 0.30 { return 0.22 + (L / 0.30) * 0.08 }
+        if L > 0.80 { return 0.80 + ((L - 0.80) / 0.20) * 0.06 }
+        return L
+    }
 
     /// sRGB -> OKLab, per https://bottosson.github.io/posts/oklab/
     private static func srgbToOKLab(_ r: Float, _ g: Float, _ b: Float) -> (L: Float, a: Float, b: Float) {
@@ -47,14 +52,12 @@ enum SceneBuilder {
                 clamp01(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s))
     }
 
-    /// Remaps one STEP body color into the legible lightness band, keeping
-    /// hue and chroma. Input is sRGB-encoded (STEP COLOUR_RGB convention),
-    /// output is linear for the GPU.
+    /// Remaps one STEP body color into legible lightness, keeping hue and
+    /// chroma. Input is sRGB-encoded (STEP COLOUR_RGB convention), output is
+    /// linear for the GPU.
     private static func legibleLinearColor(_ r: Float, _ g: Float, _ b: Float) -> (Float, Float, Float) {
         let lab = srgbToOKLab(r, g, b)
-        let span = lightnessBand.upperBound - lightnessBand.lowerBound
-        let squeezedL = lightnessBand.lowerBound + lab.L * span
-        return oklabToLinearSRGB(squeezedL, lab.a, lab.b)
+        return oklabToLinearSRGB(softClampLightness(lab.L), lab.a, lab.b)
     }
 
     /// Builds the per-vertex color buffer for SceneKit from the raw foxtrot
