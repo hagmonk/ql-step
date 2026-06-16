@@ -1,9 +1,8 @@
 import SwiftUI
 import SceneKit
-import Quartz
-import Metal
 import AppKit
 import UniformTypeIdentifiers
+import StepPreviewKit
 
 /// Root UI used inside the demo host macOS app.  Drop a .step file to view it.
 struct QuickLookStepHostView: View {
@@ -14,7 +13,7 @@ struct QuickLookStepHostView: View {
     var body: some View {
         ZStack {
             if let scene {
-                SceneKitView(scene: scene)
+                StepPreviewView(scene: scene)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text("Drop a STEP file")
@@ -88,7 +87,7 @@ struct QuickLookStepHostView: View {
 
         do {
             print("Loading STEP at", url.path)
-            scene = try SceneBuilder.scene(for: url)
+            scene = try StepSceneLoader.scene(fromFileAt: url)
         } catch {
             scene = nil
             loadError = error.localizedDescription

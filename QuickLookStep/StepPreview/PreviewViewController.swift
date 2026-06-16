@@ -8,6 +8,7 @@
 import Cocoa
 import Quartz
 import SceneKit
+import StepPreviewKit
 
 class PreviewViewController: NSViewController, QLPreviewingController {
 
@@ -19,9 +20,7 @@ class PreviewViewController: NSViewController, QLPreviewingController {
 
     override func loadView() {
         super.loadView()
-        scnView.allowsCameraControl = true
-        scnView.backgroundColor = .clear
-        scnView.autoenablesDefaultLighting = true
+        StepPreviewView.configure(scnView)
 
         addVersionWatermark()
     }
@@ -38,8 +37,8 @@ class PreviewViewController: NSViewController, QLPreviewingController {
     func preparePreviewOfFile(at url: URL) async throws {
         // Build the scene using our shared helper so that the preview and
         // thumbnail use identical geometry, camera, and lighting.
-        let scene = try SceneBuilder.scene(for: url)
-        scnView.scene = scene
+        let scene = try StepSceneLoader.scene(fromFileAt: url)
+        StepPreviewView.display(scene, in: scnView)
     }
 
     private func addVersionWatermark() {

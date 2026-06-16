@@ -12,9 +12,12 @@
 		42E196E62E25781E009F11FB /* StepThumbnail.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 42E196D92E25781D009F11FB /* StepThumbnail.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		42E196F12E257832009F11FB /* Quartz.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 42E196DD2E25781E009F11FB /* Quartz.framework */; };
 		42E196FE2E257832009F11FB /* StepPreview.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 42E196F02E257832009F11FB /* StepPreview.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		42EF489F2E25C9A300C63E21 /* SceneBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */; };
-		42EF48A02E25C9A300C63E21 /* SceneBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */; };
-		42EF48A12E25C9A300C63E21 /* SceneBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */; };
+		A1000000000000000000000E /* StepPreviewKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* StepPreviewKit.framework */; };
+		A1000000000000000000000F /* StepPreviewKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* StepPreviewKit.framework */; };
+		A10000000000000000000010 /* StepPreviewKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* StepPreviewKit.framework */; };
+		A10000000000000000000011 /* StepPreviewKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* StepPreviewKit.framework */; };
+		A10000000000000000000012 /* StepPreviewKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* StepPreviewKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000022 /* libocctbridge.dylib in Embed Test Libraries */ = {isa = PBXBuildFile; fileRef = A10000000000000000000023 /* libocctbridge.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,9 +35,48 @@
 			remoteGlobalIDString = 42E196EF2E257832009F11FB;
 			remoteInfo = StepPreview;
 		};
+		A10000000000000000000014 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 42E196BE2E2577BA009F11FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000006;
+			remoteInfo = StepPreviewKit;
+		};
+		A10000000000000000000016 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 42E196BE2E2577BA009F11FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000006;
+			remoteInfo = StepPreviewKit;
+		};
+		A10000000000000000000018 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 42E196BE2E2577BA009F11FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000006;
+			remoteInfo = StepPreviewKit;
+		};
+		A1000000000000000000001A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 42E196BE2E2577BA009F11FB /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000006;
+			remoteInfo = StepPreviewKit;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000013 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A10000000000000000000012 /* StepPreviewKit.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		42E196EB2E25781E009F11FB /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -47,6 +89,17 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000024 /* Embed Test Libraries */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A10000000000000000000022 /* libocctbridge.dylib in Embed Test Libraries */,
+			);
+			name = "Embed Test Libraries";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -56,7 +109,9 @@
 		42E196DD2E25781E009F11FB /* Quartz.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Quartz.framework; path = System/Library/Frameworks/Quartz.framework; sourceTree = SDKROOT; };
 		42E196F02E257832009F11FB /* StepPreview.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = StepPreview.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		42EF487F2E25824600C63E21 /* Shared-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Shared-Bridging-Header.h"; sourceTree = "<group>"; };
-		42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneBuilder.swift; sourceTree = "<group>"; };
+		A10000000000000000000001 /* StepPreviewKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = StepPreviewKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000002 /* StepPreviewKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StepPreviewKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000023 /* libocctbridge.dylib */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.dylib"; path = "../occt-bridge/libocctbridge.dylib"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -108,6 +163,16 @@
 			path = StepPreview;
 			sourceTree = "<group>";
 		};
+		A10000000000000000000004 /* StepPreviewKit */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = StepPreviewKit;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000005 /* StepPreviewKitTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = StepPreviewKitTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -115,6 +180,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1000000000000000000000E /* StepPreviewKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -122,6 +188,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1000000000000000000000F /* StepPreviewKit.framework in Frameworks */,
 				42E196DC2E25781E009F11FB /* QuickLookThumbnailing.framework in Frameworks */,
 				42E196DE2E25781E009F11FB /* Quartz.framework in Frameworks */,
 			);
@@ -131,7 +198,23 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000010 /* StepPreviewKit.framework in Frameworks */,
 				42E196F12E257832009F11FB /* Quartz.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000000C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000011 /* StepPreviewKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -144,10 +227,11 @@
 				42E196C82E2577BA009F11FB /* QuickLookStep */,
 				42E196DF2E25781E009F11FB /* StepThumbnail */,
 				42E196F22E257832009F11FB /* StepPreview */,
+				A10000000000000000000004 /* StepPreviewKit */,
+				A10000000000000000000005 /* StepPreviewKitTests */,
 				42E196DA2E25781D009F11FB /* Frameworks */,
 				42E196C72E2577BA009F11FB /* Products */,
 				42EF487F2E25824600C63E21 /* Shared-Bridging-Header.h */,
-				42EF489E2E25C9A300C63E21 /* SceneBuilder.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -157,6 +241,8 @@
 				42E196C62E2577BA009F11FB /* QuickLookStep.app */,
 				42E196D92E25781D009F11FB /* StepThumbnail.appex */,
 				42E196F02E257832009F11FB /* StepPreview.appex */,
+				A10000000000000000000001 /* StepPreviewKit.framework */,
+				A10000000000000000000002 /* StepPreviewKitTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -166,6 +252,7 @@
 			children = (
 				42E196DB2E25781E009F11FB /* QuickLookThumbnailing.framework */,
 				42E196DD2E25781E009F11FB /* Quartz.framework */,
+				A10000000000000000000023 /* libocctbridge.dylib */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -180,6 +267,7 @@
 				42E196C22E2577BA009F11FB /* Sources */,
 				42E196C32E2577BA009F11FB /* Frameworks */,
 				42E196C42E2577BA009F11FB /* Resources */,
+				A10000000000000000000013 /* Embed Frameworks */,
 				42E196EB2E25781E009F11FB /* Embed Foundation Extensions */,
 			);
 			buildRules = (
@@ -187,6 +275,7 @@
 			dependencies = (
 				42E196E52E25781E009F11FB /* PBXTargetDependency */,
 				42E196FD2E257832009F11FB /* PBXTargetDependency */,
+				A10000000000000000000015 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				42E196C82E2577BA009F11FB /* QuickLookStep */,
@@ -209,6 +298,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				A10000000000000000000017 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				42E196DF2E25781E009F11FB /* StepThumbnail */,
@@ -231,6 +321,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				A10000000000000000000019 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				42E196F22E257832009F11FB /* StepPreview */,
@@ -241,6 +332,52 @@
 			productName = StepPreview;
 			productReference = 42E196F02E257832009F11FB /* StepPreview.appex */;
 			productType = "com.apple.product-type.app-extension";
+		};
+		A10000000000000000000006 /* StepPreviewKit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000000001E /* Build configuration list for PBXNativeTarget "StepPreviewKit" */;
+			buildPhases = (
+				A10000000000000000000008 /* Sources */,
+				A10000000000000000000009 /* Frameworks */,
+				A1000000000000000000000A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000004 /* StepPreviewKit */,
+			);
+			name = StepPreviewKit;
+			packageProductDependencies = (
+			);
+			productName = StepPreviewKit;
+			productReference = A10000000000000000000001 /* StepPreviewKit.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		A10000000000000000000007 /* StepPreviewKitTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000021 /* Build configuration list for PBXNativeTarget "StepPreviewKitTests" */;
+			buildPhases = (
+				A1000000000000000000000B /* Sources */,
+				A1000000000000000000000C /* Frameworks */,
+				A10000000000000000000024 /* Embed Test Libraries */,
+				A1000000000000000000000D /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A1000000000000000000001B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000005 /* StepPreviewKitTests */,
+			);
+			name = StepPreviewKitTests;
+			packageProductDependencies = (
+			);
+			productName = StepPreviewKitTests;
+			productReference = A10000000000000000000002 /* StepPreviewKitTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -259,6 +396,12 @@
 						CreatedOnToolsVersion = 16.4;
 					};
 					42E196EF2E257832009F11FB = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					A10000000000000000000006 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					A10000000000000000000007 = {
 						CreatedOnToolsVersion = 16.4;
 					};
 				};
@@ -280,6 +423,8 @@
 				42E196C52E2577BA009F11FB /* QuickLookStep */,
 				42E196D82E25781D009F11FB /* StepThumbnail */,
 				42E196EF2E257832009F11FB /* StepPreview */,
+				A10000000000000000000006 /* StepPreviewKit */,
+				A10000000000000000000007 /* StepPreviewKitTests */,
 			);
 		};
 /* End PBXProject section */
@@ -306,6 +451,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1000000000000000000000A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000000D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -313,7 +472,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				42EF48A02E25C9A300C63E21 /* SceneBuilder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -321,7 +479,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				42EF489F2E25C9A300C63E21 /* SceneBuilder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -329,7 +486,20 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				42EF48A12E25C9A300C63E21 /* SceneBuilder.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -345,6 +515,26 @@
 			isa = PBXTargetDependency;
 			target = 42E196EF2E257832009F11FB /* StepPreview */;
 			targetProxy = 42E196FC2E257832009F11FB /* PBXContainerItemProxy */;
+		};
+		A10000000000000000000015 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000006 /* StepPreviewKit */;
+			targetProxy = A10000000000000000000014 /* PBXContainerItemProxy */;
+		};
+		A10000000000000000000017 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000006 /* StepPreviewKit */;
+			targetProxy = A10000000000000000000016 /* PBXContainerItemProxy */;
+		};
+		A10000000000000000000019 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000006 /* StepPreviewKit */;
+			targetProxy = A10000000000000000000018 /* PBXContainerItemProxy */;
+		};
+		A1000000000000000000001B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000006 /* StepPreviewKit */;
+			targetProxy = A1000000000000000000001A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -409,7 +599,6 @@
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
-				SWIFT_OBJC_BRIDGING_HEADER = "Shared-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
@@ -467,7 +656,6 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OBJC_BRIDGING_HEADER = "Shared-Bridging-Header.h";
 			};
 			name = Release;
 		};
@@ -664,6 +852,113 @@
 			};
 			name = Release;
 		};
+		A1000000000000000000001C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 21;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = 62G85M9ZN5;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "@rpath";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+					"@loader_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"$(SRCROOT)/../occt-bridge/libocctbridge.dylib",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hagmonk.StepPreviewKit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Shared-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1000000000000000000001D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 21;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = 62G85M9ZN5;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "@rpath";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+					"@loader_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 2.0.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"$(SRCROOT)/../occt-bridge/libocctbridge.dylib",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hagmonk.StepPreviewKit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Shared-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A1000000000000000000001F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 62G85M9ZN5;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hagmonk.StepPreviewKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "";
+			};
+			name = Debug;
+		};
+		A10000000000000000000020 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Manual;
+				DEVELOPMENT_TEAM = "";
+				"DEVELOPMENT_TEAM[sdk=macosx*]" = 62G85M9ZN5;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hagmonk.StepPreviewKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -699,6 +994,24 @@
 			buildConfigurations = (
 				42E197012E257832009F11FB /* Debug */,
 				42E197022E257832009F11FB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000000000000000000001E /* Build configuration list for PBXNativeTarget "StepPreviewKit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000001C /* Debug */,
+				A1000000000000000000001D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000021 /* Build configuration list for PBXNativeTarget "StepPreviewKitTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000001F /* Debug */,
+				A10000000000000000000020 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
