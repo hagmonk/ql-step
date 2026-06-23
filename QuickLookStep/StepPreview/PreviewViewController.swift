@@ -13,6 +13,7 @@ import StepPreviewKit
 class PreviewViewController: NSViewController, QLPreviewingController {
 
     @IBOutlet var scnView: SCNView!
+    private var previewView: StepPreviewContainerView!
     
     override var nibName: NSNib.Name? {
         return NSNib.Name("PreviewViewController")
@@ -20,7 +21,12 @@ class PreviewViewController: NSViewController, QLPreviewingController {
 
     override func loadView() {
         super.loadView()
-        StepPreviewView.configure(scnView)
+        previewView = StepPreviewContainerView(frame: scnView.frame)
+        previewView.autoresizingMask = scnView.autoresizingMask
+        previewView.translatesAutoresizingMaskIntoConstraints = scnView.translatesAutoresizingMaskIntoConstraints
+        if let superview = scnView.superview {
+            superview.replaceSubview(scnView, with: previewView)
+        }
 
         addVersionWatermark()
     }
@@ -38,7 +44,7 @@ class PreviewViewController: NSViewController, QLPreviewingController {
         // Build the scene using our shared helper so that the preview and
         // thumbnail use identical geometry, camera, and lighting.
         let scene = try StepSceneLoader.scene(fromFileAt: url)
-        StepPreviewView.display(scene, in: scnView)
+        previewView.display(scene)
     }
 
     private func addVersionWatermark() {

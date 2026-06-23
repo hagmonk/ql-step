@@ -9,8 +9,22 @@
 extern "C" {
 #endif
 
-/* Field layout mirrors foxtrot's MeshSlice so the Swift side treats both
- * backends identically. Colors are sRGB-encoded floats per vertex. */
+typedef struct OcctPart {
+  size_t vertex_start;
+  size_t vertex_count;
+  size_t triangle_start;
+  size_t triangle_count;
+  float min_x;
+  float min_y;
+  float min_z;
+  float max_x;
+  float max_y;
+  float max_z;
+} OcctPart;
+
+/* Field layout begins with foxtrot's MeshSlice so the Swift side treats both
+ * backends identically. Colors are sRGB-encoded floats per vertex. Part slices
+ * identify contiguous vertex/triangle ranges for XCAF assembly components. */
 typedef struct OcctMesh {
   const float *verts;
   const float *normals;
@@ -18,6 +32,8 @@ typedef struct OcctMesh {
   const uint32_t *tris;
   size_t vert_count;
   size_t tri_count;
+  const OcctPart *parts;
+  size_t part_count;
 } OcctMesh;
 
 typedef struct OcctLoadOptions {
@@ -52,6 +68,7 @@ void occt_free_mesh(OcctMesh mesh);
  * owning containers such as Swift Data(bytesNoCopy:deallocator:). */
 void occt_free_float_buffer(const float *buffer);
 void occt_free_uint32_buffer(const uint32_t *buffer);
+void occt_free_part_buffer(const OcctPart *buffer);
 
 #ifdef __cplusplus
 }

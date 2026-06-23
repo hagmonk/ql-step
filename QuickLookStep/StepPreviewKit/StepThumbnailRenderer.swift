@@ -9,6 +9,8 @@ public enum StepThumbnailRenderer {
         time: TimeInterval = 0,
         antialiasingMode: SCNAntialiasingMode = .multisampling4X
     ) throws -> CGImage {
+        StepPreviewView.setExplosionAmount(0, in: scene)
+
         let renderer = SCNRenderer(device: MTLCreateSystemDefaultDevice(), options: nil)
         renderer.scene = scene
         renderer.pointOfView = scene.rootNode.childNode(withName: "camera", recursively: true)

@@ -194,17 +194,159 @@ private enum StepSceneBuilder {
         return oklabToLinearSRGB(softClampLightness(lab.L), lab.a, lab.b)
     }
 
-    private static func colorSource(from mesh: OcctMesh, vertexCount: Int) -> SCNGeometrySource? {
-        guard let raw = mesh.colors else { return nil }
-        defer { occt_free_float_buffer(raw) }
+    private struct MeshBounds {
+        let minX: Float
+        let minY: Float
+        let minZ: Float
+        let maxX: Float
+        let maxY: Float
+        let maxZ: Float
+
+        var centerX: Float { (minX + maxX) / 2 }
+        var centerY: Float { (minY + maxY) / 2 }
+        var centerZ: Float { (minZ + maxZ) / 2 }
+        var sizeX: Float { maxX - minX }
+        var sizeY: Float { maxY - minY }
+        var sizeZ: Float { maxZ - minZ }
+    }
+
+    private struct PartSlice {
+        let vertexStart: Int
+        let vertexCount: Int
+        let triangleStart: Int
+        let triangleCount: Int
+        let bounds: MeshBounds
+    }
+
+    private static func meshBounds(vertices: UnsafePointer<Float>, vertexCount: Int) -> MeshBounds {
+        var minX = Float.greatestFiniteMagnitude
+        var minY = Float.greatestFiniteMagnitude
+        var minZ = Float.greatestFiniteMagnitude
+        var maxX = -Float.greatestFiniteMagnitude
+        var maxY = -Float.greatestFiniteMagnitude
+        var maxZ = -Float.greatestFiniteMagnitude
+
+        for i in 0..<vertexCount {
+            let offset = i * 3
+            let x = vertices[offset]
+            let y = vertices[offset + 1]
+            let z = vertices[offset + 2]
+            minX = min(minX, x)
+            minY = min(minY, y)
+            minZ = min(minZ, z)
+            maxX = max(maxX, x)
+            maxY = max(maxY, y)
+            maxZ = max(maxZ, z)
+        }
+
+        return MeshBounds(minX: minX, minY: minY, minZ: minZ, maxX: maxX, maxY: maxY, maxZ: maxZ)
+    }
+
+    private static func partSlices(from mesh: OcctMesh, vertexCount: Int, triangleCount: Int, bounds: MeshBounds) -> [PartSlice] {
+        var slices: [PartSlice] = []
+        if let rawParts = mesh.parts, mesh.part_count > 0 {
+            for i in 0..<Int(mesh.part_count) {
+                let part = rawParts[i]
+                let vertexStart = Int(part.vertex_start)
+                let partVertexCount = Int(part.vertex_count)
+                let triangleStart = Int(part.triangle_start)
+                let partTriangleCount = Int(part.triangle_count)
+                guard partVertexCount > 0,
+                      partTriangleCount > 0,
+                      vertexStart >= 0,
+                      triangleStart >= 0,
+                      vertexStart + partVertexCount <= vertexCount,
+                      triangleStart + partTriangleCount <= triangleCount else {
+                    continue
+                }
+                let partBounds = MeshBounds(
+                    minX: part.min_x,
+                    minY: part.min_y,
+                    minZ: part.min_z,
+                    maxX: part.max_x,
+                    maxY: part.max_y,
+                    maxZ: part.max_z
+                )
+                slices.append(PartSlice(
+                    vertexStart: vertexStart,
+                    vertexCount: partVertexCount,
+                    triangleStart: triangleStart,
+                    triangleCount: partTriangleCount,
+                    bounds: partBounds
+                ))
+            }
+        }
+
+        if slices.isEmpty {
+            slices.append(PartSlice(
+                vertexStart: 0,
+                vertexCount: vertexCount,
+                triangleStart: 0,
+                triangleCount: triangleCount,
+                bounds: bounds
+            ))
+        }
+        return slices
+    }
+
+    private static func vertexSource(
+        vertices: UnsafePointer<Float>,
+        slice: PartSlice,
+        bounds: MeshBounds,
+        scaleFactor: Float
+    ) -> SCNGeometrySource {
+        var out = [Float](repeating: 0, count: slice.vertexCount * 3)
+        for i in 0..<slice.vertexCount {
+            let sourceOffset = (slice.vertexStart + i) * 3
+            let targetOffset = i * 3
+            out[targetOffset] = (vertices[sourceOffset] - bounds.centerX) * scaleFactor
+            out[targetOffset + 1] = (vertices[sourceOffset + 1] - bounds.centerY) * scaleFactor
+            out[targetOffset + 2] = (vertices[sourceOffset + 2] - bounds.centerZ) * scaleFactor
+        }
+
+        let data = out.withUnsafeBufferPointer { Data(buffer: $0) }
+        return SCNGeometrySource(
+            data: data,
+            semantic: .vertex,
+            vectorCount: slice.vertexCount,
+            usesFloatComponents: true,
+            componentsPerVector: 3,
+            bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0,
+            dataStride: 3 * MemoryLayout<Float>.size
+        )
+    }
+
+    private static func normalSource(normals: UnsafePointer<Float>?, slice: PartSlice) -> SCNGeometrySource? {
+        guard let normals else { return nil }
+        let byteCount = slice.vertexCount * 3 * MemoryLayout<Float>.size
+        let data = Data(bytes: normals.advanced(by: slice.vertexStart * 3), count: byteCount)
+        return SCNGeometrySource(
+            data: data,
+            semantic: .normal,
+            vectorCount: slice.vertexCount,
+            usesFloatComponents: true,
+            componentsPerVector: 3,
+            bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0,
+            dataStride: 3 * MemoryLayout<Float>.size
+        )
+    }
+
+    private static func colorSource(
+        colors: UnsafePointer<Float>?,
+        slice: PartSlice,
+        converted: inout [UInt64: (Float, Float, Float)]
+    ) -> SCNGeometrySource? {
+        guard let raw = colors else { return nil }
 
         // RGBA, not RGB: the physically-based shader reads a 4-component
         // color; a 3-component source leaves alpha undefined and the model
         // multiplies to black.
-        var converted: [UInt64: (Float, Float, Float)] = [:]
-        var out = [Float](repeating: 1, count: vertexCount * 4)
-        for i in 0..<vertexCount {
-            let r = raw[i * 3], g = raw[i * 3 + 1], b = raw[i * 3 + 2]
+        var out = [Float](repeating: 1, count: slice.vertexCount * 4)
+        for i in 0..<slice.vertexCount {
+            let sourceOffset = (slice.vertexStart + i) * 3
+            let r = raw[sourceOffset], g = raw[sourceOffset + 1], b = raw[sourceOffset + 2]
             let key = UInt64(r.bitPattern) << 42 ^ UInt64(g.bitPattern) << 21 ^ UInt64(b.bitPattern)
             let c: (Float, Float, Float)
             if let cached = converted[key] {
@@ -213,16 +355,17 @@ private enum StepSceneBuilder {
                 c = legibleLinearColor(r, g, b)
                 converted[key] = c
             }
-            out[i * 4] = c.0
-            out[i * 4 + 1] = c.1
-            out[i * 4 + 2] = c.2
+            let targetOffset = i * 4
+            out[targetOffset] = c.0
+            out[targetOffset + 1] = c.1
+            out[targetOffset + 2] = c.2
         }
 
         let data = out.withUnsafeBufferPointer { Data(buffer: $0) }
         return SCNGeometrySource(
             data: data,
             semantic: .color,
-            vectorCount: vertexCount,
+            vectorCount: slice.vertexCount,
             usesFloatComponents: true,
             componentsPerVector: 4,
             bytesPerComponent: MemoryLayout<Float>.size,
@@ -231,26 +374,57 @@ private enum StepSceneBuilder {
         )
     }
 
-    private static func normalSource(from mesh: OcctMesh, vertexCount: Int) -> SCNGeometrySource? {
-        guard let normals = mesh.normals else { return nil }
-        let byteCount = vertexCount * 3 * MemoryLayout<Float>.size
-        let data = Data(
-            bytesNoCopy: UnsafeMutableRawPointer(mutating: normals),
-            count: byteCount,
-            deallocator: .custom { pointer, _ in
-                occt_free_float_buffer(pointer.assumingMemoryBound(to: Float.self))
-            }
-        )
-        return SCNGeometrySource(
+    private static func geometryElement(triangles: UnsafePointer<UInt32>, slice: PartSlice) -> SCNGeometryElement {
+        var indices = [UInt32](repeating: 0, count: slice.triangleCount * 3)
+        for i in 0..<indices.count {
+            let globalIndex = Int(triangles[slice.triangleStart * 3 + i])
+            indices[i] = UInt32(globalIndex - slice.vertexStart)
+        }
+        let data = indices.withUnsafeBufferPointer { Data(buffer: $0) }
+        return SCNGeometryElement(
             data: data,
-            semantic: .normal,
-            vectorCount: vertexCount,
-            usesFloatComponents: true,
-            componentsPerVector: 3,
-            bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0,
-            dataStride: 3 * MemoryLayout<Float>.size
+            primitiveType: .triangles,
+            primitiveCount: slice.triangleCount,
+            bytesPerIndex: MemoryLayout<UInt32>.size
         )
+    }
+
+    private static func material() -> SCNMaterial {
+        let material = SCNMaterial()
+        material.lightingModel = .physicallyBased
+        material.roughness.contents = 0.55
+        material.metalness.contents = 0.05
+        material.diffuse.contents = NSColor.white
+        material.isDoubleSided = true
+        return material
+    }
+
+    private static func partCenter(slice: PartSlice, modelBounds: MeshBounds, scaleFactor: Float) -> SCNVector3 {
+        SCNVector3(
+            (slice.bounds.centerX - modelBounds.centerX) * scaleFactor,
+            (slice.bounds.centerY - modelBounds.centerY) * scaleFactor,
+            (slice.bounds.centerZ - modelBounds.centerZ) * scaleFactor
+        )
+    }
+
+    private static func explosionDirection(center: SCNVector3, partIndex: Int) -> SCNVector3 {
+        let x = Float(center.x)
+        let y = Float(center.y)
+        let z = Float(center.z)
+        let length = sqrtf(x * x + y * y + z * z)
+        if length > 0.001 {
+            return SCNVector3(x / length, y / length, z / length)
+        }
+
+        let fallback = [
+            SCNVector3(1, 0, 0),
+            SCNVector3(-1, 0, 0),
+            SCNVector3(0, 1, 0),
+            SCNVector3(0, -1, 0),
+            SCNVector3(0, 0, 1),
+            SCNVector3(0, 0, -1)
+        ]
+        return fallback[partIndex % fallback.count]
     }
 
     static func scene(from source: StepSceneSource, options: StepSceneLoader.Options) throws -> SCNScene {
@@ -289,87 +463,73 @@ private enum StepSceneBuilder {
         guard ok else {
             throw StepPreviewKitError.failedToLoadSTEP(source.displayName)
         }
+        defer { occt_free_mesh(mesh) }
 
         let vertexCount = Int(mesh.vert_count)
-        let indexCount = Int(mesh.tri_count) * 3
-
-        let vertexByteCount = vertexCount * 3 * MemoryLayout<Float>.size
-        let vertexData = Data(
-            bytesNoCopy: UnsafeMutableRawPointer(mutating: mesh.verts!),
-            count: vertexByteCount,
-            deallocator: .custom { pointer, _ in
-                occt_free_float_buffer(pointer.assumingMemoryBound(to: Float.self))
-            }
-        )
-        let vertexSource = SCNGeometrySource(
-            data: vertexData,
-            semantic: .vertex,
-            vectorCount: vertexCount,
-            usesFloatComponents: true,
-            componentsPerVector: 3,
-            bytesPerComponent: MemoryLayout<Float>.size,
-            dataOffset: 0,
-            dataStride: 3 * MemoryLayout<Float>.size
-        )
-
-        let indexByteCount = indexCount * MemoryLayout<UInt32>.size
-        let indexData = Data(
-            bytesNoCopy: UnsafeMutableRawPointer(mutating: mesh.tris!),
-            count: indexByteCount,
-            deallocator: .custom { pointer, _ in
-                occt_free_uint32_buffer(pointer.assumingMemoryBound(to: UInt32.self))
-            }
-        )
-        let geometryElement = SCNGeometryElement(
-            data: indexData,
-            primitiveType: .triangles,
-            primitiveCount: Int(mesh.tri_count),
-            bytesPerIndex: MemoryLayout<UInt32>.size
-        )
-
-        var sources = [vertexSource]
-        if let normals = normalSource(from: mesh, vertexCount: vertexCount) {
-            sources.append(normals)
-        }
-        if let colors = colorSource(from: mesh, vertexCount: vertexCount) {
-            sources.append(colors)
+        let triangleCount = Int(mesh.tri_count)
+        guard vertexCount > 0,
+              triangleCount > 0,
+              let vertices = mesh.verts,
+              let triangles = mesh.tris else {
+            throw StepPreviewKitError.failedToLoadSTEP(source.displayName)
         }
 
-        let geometry = SCNGeometry(sources: sources, elements: [geometryElement])
-        let material = SCNMaterial()
-        material.lightingModel = .physicallyBased
-        material.roughness.contents = 0.55
-        material.metalness.contents = 0.05
-        material.diffuse.contents = NSColor.white
-        material.isDoubleSided = true
-        geometry.firstMaterial = material
+        let bounds = meshBounds(vertices: vertices, vertexCount: vertexCount)
+        let maxExtent = max(bounds.sizeX, max(bounds.sizeY, bounds.sizeZ))
+        let targetSize: Float = 100.0
+        let scaleFactor = maxExtent > 0 ? targetSize / maxExtent : 1
+        let radius = sqrtf(bounds.sizeX * bounds.sizeX + bounds.sizeY * bounds.sizeY + bounds.sizeZ * bounds.sizeZ) / 2 * scaleFactor
+        let slices = partSlices(from: mesh, vertexCount: vertexCount, triangleCount: triangleCount, bounds: bounds)
 
         let scene = SCNScene()
-        let node = SCNNode(geometry: geometry)
-        node.castsShadow = false
-        scene.rootNode.addChildNode(node)
+        scene.background.contents = StepPreviewAppearance.backgroundColor
+        StepSceneMetadata.setModelRadius(radius, on: scene.rootNode)
 
-        let (minBounds, maxBounds) = node.boundingBox
-        let size = SCNVector3(
-            maxBounds.x - minBounds.x,
-            maxBounds.y - minBounds.y,
-            maxBounds.z - minBounds.z
-        )
+        let modelRoot = SCNNode()
+        modelRoot.name = StepSceneMetadata.modelRootName
+        scene.rootNode.addChildNode(modelRoot)
 
-        let targetSize: CGFloat = 100.0
-        let maxExtent = max(size.x, max(size.y, size.z))
-        let scaleFactor = targetSize / maxExtent
-        let sf = Float(scaleFactor)
-        node.scale = SCNVector3(sf, sf, sf)
+        let sharedMaterial = material()
+        let maxSpread = slices.count > 1 ? radius * 0.75 : 0
+        var convertedColors: [UInt64: (Float, Float, Float)] = [:]
+        for (index, slice) in slices.enumerated() {
+            var sources = [
+                vertexSource(
+                    vertices: vertices,
+                    slice: slice,
+                    bounds: bounds,
+                    scaleFactor: scaleFactor
+                )
+            ]
+            if let normals = normalSource(normals: mesh.normals, slice: slice) {
+                sources.append(normals)
+            }
+            if let colors = colorSource(colors: mesh.colors, slice: slice, converted: &convertedColors) {
+                sources.append(colors)
+            }
 
-        let center = SCNVector3(
-            (maxBounds.x + minBounds.x) / 2.0,
-            (maxBounds.y + minBounds.y) / 2.0,
-            (maxBounds.z + minBounds.z) / 2.0
-        )
-        node.position = SCNVector3(Float(-center.x * scaleFactor),
-                                   Float(-center.y * scaleFactor),
-                                   Float(-center.z * scaleFactor))
+            let geometry = SCNGeometry(
+                sources: sources,
+                elements: [geometryElement(triangles: triangles, slice: slice)]
+            )
+            geometry.firstMaterial = sharedMaterial
+
+            let node = SCNNode(geometry: geometry)
+            node.name = "step-part-\(index)"
+            node.castsShadow = false
+            let center = partCenter(slice: slice, modelBounds: bounds, scaleFactor: scaleFactor)
+            let direction = explosionDirection(center: center, partIndex: index)
+            StepSceneMetadata.setExplosion(
+                basePosition: SCNVector3Zero,
+                offset: SCNVector3(
+                    Float(direction.x) * maxSpread,
+                    Float(direction.y) * maxSpread,
+                    Float(direction.z) * maxSpread
+                ),
+                on: node
+            )
+            modelRoot.addChildNode(node)
+        }
 
         let cameraNode = SCNNode()
         cameraNode.name = "camera"
@@ -384,8 +544,6 @@ private enum StepSceneBuilder {
         camera.screenSpaceAmbientOcclusionNormalThreshold = 0.25
         cameraNode.camera = camera
 
-        let sx = Float(size.x), sy = Float(size.y), sz = Float(size.z)
-        let radius = (sqrt(sx*sx + sy*sy + sz*sz) / 2.0) * sf
         let fovRadians = (Float(camera.fieldOfView) / 2.0) * (.pi / 180.0)
         let distance = radius / tanf(fovRadians)
 

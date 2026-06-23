@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <istream>
+#include <limits>
 #include <streambuf>
 #include <string>
 #include <utility>
@@ -78,6 +79,41 @@ struct MeshCounts {
   size_t triangles = 0;
 };
 
+struct Bounds {
+  bool hasValue = false;
+  float minX = std::numeric_limits<float>::max();
+  float minY = std::numeric_limits<float>::max();
+  float minZ = std::numeric_limits<float>::max();
+  float maxX = std::numeric_limits<float>::lowest();
+  float maxY = std::numeric_limits<float>::lowest();
+  float maxZ = std::numeric_limits<float>::lowest();
+
+  void add(const gp_Pnt &point) {
+    const float x = static_cast<float>(point.X());
+    const float y = static_cast<float>(point.Y());
+    const float z = static_cast<float>(point.Z());
+    hasValue = true;
+    minX = std::min(minX, x);
+    minY = std::min(minY, y);
+    minZ = std::min(minZ, z);
+    maxX = std::max(maxX, x);
+    maxY = std::max(maxY, y);
+    maxZ = std::max(maxZ, z);
+  }
+};
+
+struct PartBuild {
+  size_t vertexStart = 0;
+  size_t triangleStart = 0;
+  Bounds bounds;
+};
+
+struct RootShape {
+  TDF_Label label;
+  TopoDS_Shape shape;
+  std::vector<TopoDS_Shape> componentShapes;
+};
+
 class MemoryBuffer : public std::streambuf {
 public:
   MemoryBuffer(const void *bytes, size_t length) {
@@ -115,8 +151,183 @@ static MeshCounts countTriangulation(const TopoDS_Shape &shape) {
   return counts;
 }
 
+static XCAFPrs_IndexedDataMapOfShapeStyle
+collectFaceStyles(const TDF_Label &label, double &styleMs) {
+  const auto styleStart = Clock::now();
+  XCAFPrs_IndexedDataMapOfShapeStyle collected;
+  XCAFPrs::CollectStyleSettings(label, TopLoc_Location(), collected);
+  std::vector<std::pair<TopoDS_Shape, XCAFPrs_Style>> styled;
+  for (XCAFPrs_IndexedDataMapOfShapeStyle::Iterator it(collected); it.More();
+       it.Next()) {
+    if (it.Key().ShapeType() <= TopAbs_FACE) {
+      styled.emplace_back(it.Key(), it.Value());
+    }
+  }
+  std::stable_sort(styled.begin(), styled.end(), [](const auto &a,
+                                                    const auto &b) {
+    return a.first.ShapeType() > b.first.ShapeType();
+  });
+
+  XCAFPrs_IndexedDataMapOfShapeStyle faceStyles;
+  for (const auto &[styledShape, style] : styled) {
+    for (TopExp_Explorer it(styledShape, TopAbs_FACE); it.More(); it.Next()) {
+      if (faceStyles.Contains(it.Current())) {
+        passDownStyle(style, faceStyles.ChangeFromKey(it.Current()));
+      } else {
+        faceStyles.Add(it.Current(), style);
+      }
+    }
+  }
+  styleMs += elapsedMs(styleStart, Clock::now());
+  return faceStyles;
+}
+
+static void collectLeafComponentShapes(const TDF_Label &label,
+                                       const TopLoc_Location &parentLocation,
+                                       std::vector<TopoDS_Shape> &out) {
+  if (!XCAFDoc_ShapeTool::IsAssembly(label)) {
+    return;
+  }
+
+  TDF_LabelSequence components;
+  if (!XCAFDoc_ShapeTool::GetComponents(label, components, Standard_False)) {
+    return;
+  }
+
+  for (Standard_Integer i = 1; i <= components.Length(); i++) {
+    const TDF_Label component = components.Value(i);
+    const TopLoc_Location location =
+        parentLocation * XCAFDoc_ShapeTool::GetLocation(component);
+
+    TDF_Label referred;
+    if (!XCAFDoc_ShapeTool::GetReferredShape(component, referred)) {
+      TopoDS_Shape shape = XCAFDoc_ShapeTool::GetShape(component);
+      if (!shape.IsNull()) {
+        out.push_back(shape.Moved(parentLocation));
+      }
+      continue;
+    }
+
+    if (XCAFDoc_ShapeTool::IsAssembly(referred)) {
+      collectLeafComponentShapes(referred, location, out);
+      continue;
+    }
+
+    TopoDS_Shape shape = XCAFDoc_ShapeTool::GetShape(referred);
+    if (!shape.IsNull()) {
+      out.push_back(shape.Moved(location));
+    }
+  }
+}
+
+static PartBuild beginPart(const std::vector<float> &verts,
+                           const std::vector<uint32_t> &tris) {
+  return {verts.size() / 3, tris.size() / 3, Bounds()};
+}
+
+static bool finishPart(const PartBuild &part, const std::vector<float> &verts,
+                       const std::vector<uint32_t> &tris,
+                       std::vector<OcctPart> &parts) {
+  const size_t vertexCount = verts.size() / 3 - part.vertexStart;
+  const size_t triangleCount = tris.size() / 3 - part.triangleStart;
+  if (vertexCount == 0 || triangleCount == 0 || !part.bounds.hasValue) {
+    return false;
+  }
+
+  parts.push_back({part.vertexStart,
+                   vertexCount,
+                   part.triangleStart,
+                   triangleCount,
+                   part.bounds.minX,
+                   part.bounds.minY,
+                   part.bounds.minZ,
+                   part.bounds.maxX,
+                   part.bounds.maxY,
+                   part.bounds.maxZ});
+  return true;
+}
+
+static void emitShape(const TopoDS_Shape &shape,
+                      const XCAFPrs_IndexedDataMapOfShapeStyle &faceStyles,
+                      std::vector<float> &verts, std::vector<float> &normals,
+                      std::vector<float> &colors,
+                      std::vector<uint32_t> &tris, uint32_t &shift,
+                      PartBuild &part, size_t &faceCount,
+                      size_t &normalComputeCount, size_t &normalReuseCount) {
+  for (TopExp_Explorer exFace(shape, TopAbs_FACE); exFace.More();
+       exFace.Next()) {
+    TopoDS_Face face = TopoDS::Face(exFace.Current());
+    TopLoc_Location location;
+    Handle(Poly_Triangulation) poly = BRep_Tool::Triangulation(face, location);
+    if (poly.IsNull()) {
+      continue;
+    }
+    if (poly->HasNormals()) {
+      normalReuseCount++;
+    } else {
+      Poly::ComputeNormals(poly);
+      normalComputeCount++;
+    }
+    faceCount++;
+    const bool reversed = (face.Orientation() == TopAbs_REVERSED);
+    const gp_Trsf trsf = location.Transformation();
+    const bool hasTransform = trsf.Form() != gp_Identity;
+
+    float rgb[3] = {kF3DGrey, kF3DGrey, kF3DGrey};
+    if (faceStyles.Contains(face)) {
+      const XCAFPrs_Style &style = faceStyles.FindFromKey(face);
+      if (style.IsSetColorSurf()) {
+        Standard_Real r, g, b;
+        style.GetColorSurf().Values(r, g, b, Quantity_TOC_sRGB);
+        rgb[0] = static_cast<float>(r);
+        rgb[1] = static_cast<float>(g);
+        rgb[2] = static_cast<float>(b);
+      }
+    }
+
+    const int nbV = poly->NbNodes();
+    const int nbT = poly->NbTriangles();
+    for (int i = 1; i <= nbV; i++) {
+      const gp_Pnt p =
+          hasTransform ? poly->Node(i).Transformed(trsf) : poly->Node(i);
+      part.bounds.add(p);
+      verts.push_back(static_cast<float>(p.X()));
+      verts.push_back(static_cast<float>(p.Y()));
+      verts.push_back(static_cast<float>(p.Z()));
+
+      gp_Dir n =
+          poly->HasNormals() ? gp_Dir(poly->Normal(i)) : gp_Dir(0, 0, 1);
+      if (hasTransform) {
+        n.Transform(trsf);
+      }
+      const float flip = reversed ? -1.0f : 1.0f;
+      normals.push_back(static_cast<float>(n.X() * flip));
+      normals.push_back(static_cast<float>(n.Y() * flip));
+      normals.push_back(static_cast<float>(n.Z() * flip));
+
+      colors.push_back(rgb[0]);
+      colors.push_back(rgb[1]);
+      colors.push_back(rgb[2]);
+    }
+
+    for (int i = 1; i <= nbT; i++) {
+      int n1, n2, n3;
+      poly->Triangle(i).Get(n1, n2, n3);
+      if (reversed) {
+        std::swap(n1, n3);
+      }
+      tris.push_back(shift + static_cast<uint32_t>(n1) - 1);
+      tris.push_back(shift + static_cast<uint32_t>(n2) - 1);
+      tris.push_back(shift + static_cast<uint32_t>(n3) - 1);
+    }
+
+    shift += static_cast<uint32_t>(nbV);
+  }
+}
+
 static bool transferStep(STEPCAFControl_Reader &reader,
                          const OcctLoadOptions &options, OcctMesh *out) {
+  *out = {};
   const bool profile = profileEnabled();
   const auto transferStart = Clock::now();
   Handle(TDocStd_Document) doc;
@@ -131,11 +342,29 @@ static bool transferStep(STEPCAFControl_Reader &reader,
   TDF_LabelSequence freeLabels;
   shapeTool->GetFreeShapes(freeLabels);
 
+  std::vector<RootShape> roots;
+  size_t leafComponentCount = 0;
+  roots.reserve(static_cast<size_t>(freeLabels.Length()));
+  for (Standard_Integer li = 1; li <= freeLabels.Length(); li++) {
+    const TDF_Label label = freeLabels.Value(li);
+    TopoDS_Shape shape = shapeTool->GetShape(label);
+    if (shape.IsNull()) {
+      continue;
+    }
+
+    RootShape root{label, shape, {}};
+    collectLeafComponentShapes(label, TopLoc_Location(), root.componentShapes);
+    leafComponentCount += root.componentShapes.size();
+    roots.push_back(std::move(root));
+  }
+
   std::vector<float> verts;
   std::vector<float> normals;
   std::vector<float> colors;
   std::vector<uint32_t> tris;
+  std::vector<OcctPart> parts;
   uint32_t shift = 0;
+  const bool useComponentParts = leafComponentCount > 1;
 
   double styleMs = 0;
   double meshMs = 0;
@@ -145,54 +374,19 @@ static bool transferStep(STEPCAFControl_Reader &reader,
   size_t normalComputeCount = 0;
   size_t normalReuseCount = 0;
 
-  for (Standard_Integer li = 1; li <= freeLabels.Length(); li++) {
-    const TDF_Label label = freeLabels.Value(li);
-    // GetShape on an assembly label yields a compound with every child
-    // instance located, so face locations below carry the full transform
-    TopoDS_Shape shape = shapeTool->GetShape(label);
-    if (shape.IsNull()) {
-      continue;
-    }
-
-    // Collect document styles and pass them down to faces, deepest shape
-    // type first so a face-level style overrides its solid's (f3d
-    // CollectInheritedStyles)
-    const auto styleStart = Clock::now();
-    XCAFPrs_IndexedDataMapOfShapeStyle collected;
-    XCAFPrs::CollectStyleSettings(label, TopLoc_Location(), collected);
-    std::vector<std::pair<TopoDS_Shape, XCAFPrs_Style>> styled;
-    for (XCAFPrs_IndexedDataMapOfShapeStyle::Iterator it(collected);
-         it.More(); it.Next()) {
-      if (it.Key().ShapeType() <= TopAbs_FACE) {
-        styled.emplace_back(it.Key(), it.Value());
-      }
-    }
-    std::stable_sort(styled.begin(), styled.end(),
-                     [](const auto &a, const auto &b) {
-                       return a.first.ShapeType() > b.first.ShapeType();
-                     });
-    XCAFPrs_IndexedDataMapOfShapeStyle faceStyles;
-    for (const auto &[styledShape, style] : styled) {
-      for (TopExp_Explorer it(styledShape, TopAbs_FACE); it.More();
-           it.Next()) {
-        if (faceStyles.Contains(it.Current())) {
-          passDownStyle(style, faceStyles.ChangeFromKey(it.Current()));
-        } else {
-          faceStyles.Add(it.Current(), style);
-        }
-      }
-    }
-    styleMs += elapsedMs(styleStart, Clock::now());
-
+  PartBuild flattenedPart = beginPart(verts, tris);
+  for (const RootShape &root : roots) {
+    XCAFPrs_IndexedDataMapOfShapeStyle faceStyles =
+        collectFaceStyles(root.label, styleMs);
     const auto meshStart = Clock::now();
-    BRepMesh_IncrementalMesh(shape, options.linear_deflection,
+    BRepMesh_IncrementalMesh(root.shape, options.linear_deflection,
                              options.relative_deflection,
                              options.angular_deflection,
                              options.parallel_meshing);
     meshMs += elapsedMs(meshStart, Clock::now());
 
     const auto countStart = Clock::now();
-    const MeshCounts shapeCounts = countTriangulation(shape);
+    const MeshCounts shapeCounts = countTriangulation(root.shape);
     verts.reserve(verts.size() + shapeCounts.vertices * 3);
     normals.reserve(normals.size() + shapeCounts.vertices * 3);
     colors.reserve(colors.size() + shapeCounts.vertices * 3);
@@ -200,80 +394,34 @@ static bool transferStep(STEPCAFControl_Reader &reader,
     countMs += elapsedMs(countStart, Clock::now());
 
     const auto emitStart = Clock::now();
-    for (TopExp_Explorer exFace(shape, TopAbs_FACE); exFace.More();
-         exFace.Next()) {
-      TopoDS_Face face = TopoDS::Face(exFace.Current());
-      TopLoc_Location location;
-      Handle(Poly_Triangulation) poly =
-          BRep_Tool::Triangulation(face, location);
-      if (poly.IsNull()) {
-        continue;
-      }
-      if (poly->HasNormals()) {
-        normalReuseCount++;
+    if (useComponentParts) {
+      if (root.componentShapes.empty()) {
+        PartBuild part = beginPart(verts, tris);
+        emitShape(root.shape, faceStyles, verts, normals, colors, tris, shift,
+                  part, faceCount, normalComputeCount, normalReuseCount);
+        finishPart(part, verts, tris, parts);
       } else {
-        Poly::ComputeNormals(poly);
-        normalComputeCount++;
-      }
-      faceCount++;
-      const bool reversed = (face.Orientation() == TopAbs_REVERSED);
-      const gp_Trsf trsf = location.Transformation();
-      const bool hasTransform = trsf.Form() != gp_Identity;
-
-      float rgb[3] = {kF3DGrey, kF3DGrey, kF3DGrey};
-      if (faceStyles.Contains(face)) {
-        const XCAFPrs_Style &style = faceStyles.FindFromKey(face);
-        if (style.IsSetColorSurf()) {
-          Standard_Real r, g, b;
-          style.GetColorSurf().Values(r, g, b, Quantity_TOC_sRGB);
-          rgb[0] = static_cast<float>(r);
-          rgb[1] = static_cast<float>(g);
-          rgb[2] = static_cast<float>(b);
+        for (const TopoDS_Shape &componentShape : root.componentShapes) {
+          PartBuild part = beginPart(verts, tris);
+          emitShape(componentShape, faceStyles, verts, normals, colors, tris,
+                    shift, part, faceCount, normalComputeCount,
+                    normalReuseCount);
+          finishPart(part, verts, tris, parts);
         }
       }
-
-      const int nbV = poly->NbNodes();
-      const int nbT = poly->NbTriangles();
-      for (int i = 1; i <= nbV; i++) {
-        const gp_Pnt p =
-            hasTransform ? poly->Node(i).Transformed(trsf) : poly->Node(i);
-        verts.push_back(static_cast<float>(p.X()));
-        verts.push_back(static_cast<float>(p.Y()));
-        verts.push_back(static_cast<float>(p.Z()));
-
-        gp_Dir n = poly->HasNormals() ? gp_Dir(poly->Normal(i))
-                                      : gp_Dir(0, 0, 1);
-        if (hasTransform) {
-          n.Transform(trsf);
-        }
-        const float flip = reversed ? -1.0f : 1.0f;
-        normals.push_back(static_cast<float>(n.X() * flip));
-        normals.push_back(static_cast<float>(n.Y() * flip));
-        normals.push_back(static_cast<float>(n.Z() * flip));
-
-        colors.push_back(rgb[0]);
-        colors.push_back(rgb[1]);
-        colors.push_back(rgb[2]);
-      }
-
-      for (int i = 1; i <= nbT; i++) {
-        int n1, n2, n3;
-        poly->Triangle(i).Get(n1, n2, n3);
-        if (reversed) {
-          std::swap(n1, n3);
-        }
-        tris.push_back(shift + static_cast<uint32_t>(n1) - 1);
-        tris.push_back(shift + static_cast<uint32_t>(n2) - 1);
-        tris.push_back(shift + static_cast<uint32_t>(n3) - 1);
-      }
-
-      shift += static_cast<uint32_t>(nbV);
+    } else {
+      emitShape(root.shape, faceStyles, verts, normals, colors, tris, shift,
+                flattenedPart, faceCount, normalComputeCount,
+                normalReuseCount);
     }
     emitMs += elapsedMs(emitStart, Clock::now());
   }
 
   if (verts.empty() || tris.empty()) {
     return false;
+  }
+  if (!useComponentParts) {
+    finishPart(flattenedPart, verts, tris, parts);
   }
 
   const auto copyStart = Clock::now();
@@ -290,17 +438,23 @@ static bool transferStep(STEPCAFControl_Reader &reader,
   uint32_t *ibuf = new uint32_t[tris.size()];
   std::copy(tris.begin(), tris.end(), ibuf);
   out->tris = ibuf;
+  OcctPart *pbuf = new OcctPart[parts.size()];
+  std::copy(parts.begin(), parts.end(), pbuf);
+  out->parts = pbuf;
+  out->part_count = parts.size();
 
   if (profile) {
     const auto done = Clock::now();
     std::fprintf(stderr,
                  "occt profile: transfer %.1f ms, styles %.1f, mesh %.1f, "
                  "count %.1f, emit %.1f, copy %.1f, total %.1f | faces %zu, "
-                 "verts %zu, tris %zu, normals reused/computed %zu/%zu\n",
+                 "verts %zu, tris %zu, parts %zu, normals reused/computed "
+                 "%zu/%zu\n",
                  elapsedMs(transferStart, transferEnd), styleMs, meshMs,
                  countMs, emitMs, elapsedMs(copyStart, done),
                  elapsedMs(transferStart, done), faceCount, out->vert_count,
-                 out->tri_count, normalReuseCount, normalComputeCount);
+                 out->tri_count, out->part_count, normalReuseCount,
+                 normalComputeCount);
   }
   return true;
 }
@@ -379,6 +533,7 @@ extern "C" void occt_free_mesh(OcctMesh mesh) {
   occt_free_float_buffer(mesh.normals);
   occt_free_float_buffer(mesh.colors);
   occt_free_uint32_buffer(mesh.tris);
+  occt_free_part_buffer(mesh.parts);
 }
 
 extern "C" void occt_free_float_buffer(const float *buffer) {
@@ -386,5 +541,9 @@ extern "C" void occt_free_float_buffer(const float *buffer) {
 }
 
 extern "C" void occt_free_uint32_buffer(const uint32_t *buffer) {
+  delete[] buffer;
+}
+
+extern "C" void occt_free_part_buffer(const OcctPart *buffer) {
   delete[] buffer;
 }

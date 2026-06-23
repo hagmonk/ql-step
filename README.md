@@ -31,6 +31,10 @@ C ABI used by `StepPreviewKit`:
   instance locations baked into points, normals rotated by the location
   transform and flipped for reversed faces, triangle winding corrected
   likewise.
+* XCAF assembly leaf components are emitted as part slices alongside the flat
+  mesh buffers. `StepPreviewKit` uses those slices to build one SceneKit node
+  per component for interactive exploded views; files without useful assembly
+  labels still render as one flattened part.
 * Colors are extracted as sRGB floats per vertex.
 * Faces without an OCCT surface style fall back to f3d's named preview grey
   (`f3d_grey`, `#545454`) instead of pure white.
@@ -57,6 +61,14 @@ On the bundled 178CT fixture, the default settings emit 116,668 vertices /
   only at the extremes, so true black stays barely visible against a dark
   Quick Look panel and white powder-coat stays visible against light Finder
   backgrounds. Conversion is memoized per unique color.
+* **Shared preview surface.** The app host and Quick Look preview both use
+  `StepPreviewContainerView` / `StepPreviewView` from `StepPreviewKit`; runtime
+  background color, camera rig, exploded-view controls, reset behavior, and
+  mouse/trackpad input should not be reimplemented in the adapters.
+* **Exploded-view hierarchy.** Scenes contain a `step-model-root` node with
+  geometry children named `step-part-N`. `StepPreviewView.setExplosionAmount`
+  offsets those part nodes radially from the normalized model center; thumbnail
+  rendering always forces the amount back to zero.
 
 ### SceneKit/Quick Look facts encoded here
 
@@ -89,8 +101,9 @@ before assuming colors are being dropped.
 
 ### Reuse in a Swift app
 
-The reusable surface is `StepPreviewKit.framework`; the Quick Look preview and
-thumbnail extensions are thin adapters over it.
+The reusable surface is `StepPreviewKit.framework`; the Quick Look preview,
+thumbnail extension, and "Open With QuickLookStep" app are thin adapters over
+it.
 
 ```swift
 import StepPreviewKit
@@ -101,6 +114,24 @@ let view = StepPreviewView(scene: scene)
 
 For file-backed content, use `StepSceneLoader.scene(fromFileAt:)`. For
 off-screen thumbnails, use `StepThumbnailRenderer`.
+
+`StepPreviewView` resets the camera each time a new scene is displayed. If you
+embed AppKit directly, prefer `StepPreviewContainerView`; it includes the same
+SceneKit view, full-rotation camera rig, double-click reset, mouse/trackpad
+input, and conditional Explode slider used by the Quick Look extension and the
+host app. Use `StepPreviewView.configuredSceneView()` or
+`StepPreviewView.replaceWithConfiguredSceneView(_:)` only when you need the raw
+`SCNView` without framework-owned controls.
+
+Exploded view is preview-only. Use the SwiftUI wrapper's `explosionAmount`
+parameter, `StepPreviewContainerView.setExplosionAmount(_:)`, or drive a raw
+AppKit view/scene directly:
+
+```swift
+previewView.setExplosionAmount(0.6)
+StepPreviewView.setExplosionAmount(0.6, in: scnView)
+StepPreviewView.setExplosionAmount(0, in: scene)
+```
 
 For dense grids or canvases where close-up silhouette fidelity matters less
 than throughput, use the coarser preset:
@@ -180,6 +211,28 @@ If the extensions still don't activate: `System Settings` → `General` →
 Select any `.step` / `.stp` file in Finder: Space for the interactive
 preview, or see thumbnails in icon/column views. The app itself only needs
 to be opened once, to register the extensions.
+
+Camera behavior:
+
+* Opening or reopening a preview resets the camera to the model's default
+  framed view.
+* Double-click in the preview resets the camera in-place.
+* Trackpad and left-mouse drag use ql-step's custom orbit rig, so pitch is not
+  clamped at the top or bottom and can continue through a full rotation.
+* Trackpad pinch zooms the camera in and out.
+* Trackpad two-finger pan moves the camera target.
+* Trackpad twist rolls the camera around the view axis.
+* On a three-button mouse, middle-drag orbits around the camera Y axis,
+  Shift+middle-drag pans, and Control+middle-drag or Option+middle-drag
+  dollies.
+* Shift+left-drag pans; Control+left-drag or Option+left-drag dollies.
+
+Exploded view:
+
+* The Quick Look preview and host app show an `Explode` slider only when the
+  STEP file has multiple explodable parts.
+* Slider value `0` is unexploded; dragging right spreads the parts outward.
+* Finder thumbnails are always rendered non-exploded.
 
 ## Troubleshooting
 
