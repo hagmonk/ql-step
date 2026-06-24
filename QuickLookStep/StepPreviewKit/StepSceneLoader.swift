@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SceneKit
+import simd
 
 // Under SwiftPM the OCCT bridge is a C module; under the Xcode build the same
 // symbols arrive via Shared-Bridging-Header.h, where this module doesn't exist.
@@ -20,6 +21,23 @@ public enum StepPreviewKitError: Error, LocalizedError {
             return "Failed to render STEP thumbnail"
         }
     }
+}
+
+/// Physical bounding-box extents of a model, in original STEP units
+/// (millimetres) — recovered from a scene's metadata, independent of the
+/// on-screen normalization applied to the render mesh.
+public struct StepModelBounds: Sendable, Equatable {
+    public let dx: Double
+    public let dy: Double
+    public let dz: Double
+
+    public init(dx: Double, dy: Double, dz: Double) {
+        self.dx = dx
+        self.dy = dy
+        self.dz = dz
+    }
+
+    public var maxExtent: Double { Swift.max(dx, Swift.max(dy, dz)) }
 }
 
 public enum StepSceneLoader {
@@ -70,6 +88,20 @@ public enum StepSceneLoader {
         options: Options = .default
     ) throws -> SCNScene {
         try StepSceneBuilder.scene(from: .data(data, name: name), options: options)
+    }
+
+    /// Physical extents (mm) of a scene produced by this loader, read from the
+    /// metadata captured before the render mesh was normalized. Returns nil for
+    /// scenes not built by `StepSceneLoader`.
+    public static func modelBounds(in scene: SCNScene) -> StepModelBounds? {
+        guard let (min, max) = StepSceneMetadata.modelBounds(on: scene.rootNode) else {
+            return nil
+        }
+        return StepModelBounds(
+            dx: abs(Double(max.x - min.x)),
+            dy: abs(Double(max.y - min.y)),
+            dz: abs(Double(max.z - min.z))
+        )
     }
 }
 
@@ -407,24 +439,215 @@ private enum StepSceneBuilder {
         )
     }
 
-    private static func explosionDirection(center: SCNVector3, partIndex: Int) -> SCNVector3 {
-        let x = Float(center.x)
-        let y = Float(center.y)
-        let z = Float(center.z)
-        let length = sqrtf(x * x + y * y + z * z)
-        if length > 0.001 {
-            return SCNVector3(x / length, y / length, z / length)
+    /// Per-part explosion offsets (applied at amount = 1).
+    ///
+    /// Each part (or group of parts) is exploded along the axis-aligned direction
+    /// in which it is *least blocked* by the rest of the assembly — its natural
+    /// disassembly direction. This is the standard approach for automatic
+    /// exploded views (Li & Agrawala, SIGGRAPH 2008): restrict motion to the
+    /// model's axes and pick the direction that frees it with the least travel,
+    /// breaking ties toward the part's position relative to the assembly centre.
+    /// An end panel slides off its face; a part nested in an open channel lifts
+    /// straight out.
+    ///
+    /// **Repeated small parts explode as a group.** A regular array of identical
+    /// parts — IDC contacts, a row of outlets, a set of fasteners — would
+    /// otherwise each pick its own radial direction and fan apart, scrambling the
+    /// pattern. Instead we cluster identical (same triangle count + bounding box),
+    /// nearby, *small* parts and move the whole cluster as one rigid unit, so the
+    /// array keeps its arrangement. The "small" test is what keeps two large
+    /// identical shell-halves out of a group, so a clamshell still splits.
+    ///
+    /// The single largest part is held fixed as the anchor (offset zero). A
+    /// relaxation pass over the groups removes any residual interpenetration.
+    ///
+    /// Returns the per-part offsets plus the bounding radius of the fully
+    /// exploded assembly, so the camera can be re-framed as the model opens up.
+    private static func explosionOffsets(
+        slices: [PartSlice],
+        modelBounds: MeshBounds,
+        scaleFactor: Float,
+        radius: Float
+    ) -> (offsets: [SCNVector3], explodedRadius: Float) {
+        let n = slices.count
+        guard n > 1 else { return ([SCNVector3Zero], radius) }
+
+        func size(_ s: PartSlice) -> SIMD3<Float> {
+            SIMD3(s.bounds.sizeX, s.bounds.sizeY, s.bounds.sizeZ) * scaleFactor
+        }
+        let anchor = (0..<n).max {
+            let a = size(slices[$0]), b = size(slices[$1])
+            return a.x * a.y * a.z < b.x * b.y * b.z
+        }!
+
+        func unit(_ axis: Int) -> SIMD3<Float> {
+            var v = SIMD3<Float>(0, 0, 0)
+            v[axis] = 1
+            return v
         }
 
-        let fallback = [
-            SCNVector3(1, 0, 0),
-            SCNVector3(-1, 0, 0),
-            SCNVector3(0, 1, 0),
-            SCNVector3(0, -1, 0),
-            SCNVector3(0, 0, 1),
-            SCNVector3(0, 0, -1)
-        ]
-        return fallback[partIndex % fallback.count]
+        // Assembled (centered, scaled) centers, half-extents, and AABBs.
+        var baseCenter = [SIMD3<Float>](repeating: .zero, count: n)
+        var halfExtent = [SIMD3<Float>](repeating: .zero, count: n)
+        for i in 0..<n {
+            let c = partCenter(slice: slices[i], modelBounds: modelBounds, scaleFactor: scaleFactor)
+            baseCenter[i] = SIMD3<Float>(Float(c.x), Float(c.y), Float(c.z))
+            halfExtent[i] = size(slices[i]) * 0.5
+        }
+        let lo = (0..<n).map { baseCenter[$0] - halfExtent[$0] }
+        let hi = (0..<n).map { baseCenter[$0] + halfExtent[$0] }
+        let modelExtent = SIMD3<Float>(
+            Float(modelBounds.sizeX), Float(modelBounds.sizeY), Float(modelBounds.sizeZ)
+        ) * scaleFactor
+        let modelMax = max(modelExtent.x, max(modelExtent.y, modelExtent.z))
+
+        // --- Cluster identical, nearby, small parts into rigid groups ----------
+        let sortedHalf = (0..<n).map { i -> SIMD3<Float> in
+            let h = halfExtent[i]
+            let s = [h.x, h.y, h.z].sorted()
+            return SIMD3(s[0], s[1], s[2])
+        }
+        func isSmall(_ i: Int) -> Bool {
+            let s = halfExtent[i] * 2
+            return max(s.x, max(s.y, s.z)) < modelMax * 0.45
+        }
+        func sameShape(_ i: Int, _ j: Int) -> Bool {
+            guard slices[i].triangleCount == slices[j].triangleCount else { return false }
+            let tol = max(modelMax * 0.01, 0.01)
+            return simd_length(sortedHalf[i] - sortedHalf[j]) < tol
+        }
+        func nearby(_ i: Int, _ j: Int) -> Bool {
+            var gapSq: Float = 0
+            for a in 0..<3 {
+                let g = max(0, max(lo[i][a] - hi[j][a], lo[j][a] - hi[i][a]))
+                gapSq += g * g
+            }
+            return gapSq.squareRoot() < max(radius * 0.12, 2)
+        }
+        var parent = Array(0..<n)
+        func find(_ x: Int) -> Int {
+            var r = x
+            while parent[r] != r { parent[r] = parent[parent[r]]; r = parent[r] }
+            return r
+        }
+        for i in 0..<n where i != anchor {
+            for j in (i + 1)..<n where j != anchor {
+                if isSmall(i), isSmall(j), sameShape(i, j), nearby(i, j) {
+                    parent[find(i)] = find(j)
+                }
+            }
+        }
+        var groupMembers: [Int: [Int]] = [:]
+        for i in 0..<n { groupMembers[find(i), default: []].append(i) }
+        let anchorRoot = find(anchor)
+
+        // --- Per-group escape direction ----------------------------------------
+        let spread = max(radius * 0.22, 1)
+        let tieTolerance = max(radius * 0.05, 1)
+        let epsilon = max(radius * 0.08, 1)
+
+        // How far a box must travel along (axis a, sign s) to clear every part
+        // outside `members` that blocks it (projections overlap on the other two
+        // axes). Works for a single part or a whole group's union box.
+        func escapeDistance(boxLo: SIMD3<Float>, boxHi: SIMD3<Float>,
+                            members: Set<Int>, axis a: Int, sign s: Float) -> Float {
+            let p1 = (a + 1) % 3, p2 = (a + 2) % 3
+            var dist: Float = 0
+            for j in 0..<n where !members.contains(j) {
+                guard boxLo[p1] < hi[j][p1], lo[j][p1] < boxHi[p1],
+                      boxLo[p2] < hi[j][p2], lo[j][p2] < boxHi[p2] else { continue }
+                let needed = s > 0 ? hi[j][a] - boxLo[a] : boxHi[a] - lo[j][a]
+                dist = max(dist, max(0, needed))
+            }
+            return dist
+        }
+
+        var groupOffset: [Int: SIMD3<Float>] = [:]
+        for (root, members) in groupMembers {
+            if root == anchorRoot { groupOffset[root] = .zero; continue }
+            var gLo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var gHi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            for m in members { gLo = simd_min(gLo, lo[m]); gHi = simd_max(gHi, hi[m]) }
+            let memberSet = Set(members)
+            let hint = (gLo + gHi) * 0.5
+            var bestDistance = Float.greatestFiniteMagnitude
+            var bestAlignment = -Float.greatestFiniteMagnitude
+            var bestDirection = SIMD3<Float>(0, 0, 0)
+            for a in 0..<3 {
+                for s in [Float(1), Float(-1)] {
+                    let distance = escapeDistance(boxLo: gLo, boxHi: gHi, members: memberSet, axis: a, sign: s)
+                    let direction = unit(a) * s
+                    let alignment = simd_dot(direction, hint)
+                    if distance < bestDistance - tieTolerance
+                        || (distance < bestDistance + tieTolerance && alignment > bestAlignment) {
+                        bestDistance = min(bestDistance, distance)
+                        bestAlignment = alignment
+                        bestDirection = direction
+                    }
+                }
+            }
+            groupOffset[root] = bestDirection * (bestDistance + spread)
+        }
+
+        // --- Relax overlapping groups (whole groups move, so arrays stay rigid) -
+        let roots = groupMembers.keys.sorted()
+        for _ in 0..<24 {
+            var moved = false
+            for ai in 0..<roots.count {
+                for bi in (ai + 1)..<roots.count {
+                    let ra = roots[ai], rb = roots[bi]
+                    let offA = groupOffset[ra] ?? .zero, offB = groupOffset[rb] ?? .zero
+                    // Worst-overlapping member pair between the two groups.
+                    var worstVol: Float = 0
+                    var worstPen = SIMD3<Float>(0, 0, 0)
+                    var sign: Float = 1
+                    for i in groupMembers[ra]! {
+                        for j in groupMembers[rb]! {
+                            let ca = baseCenter[i] + offA, cb = baseCenter[j] + offB
+                            let pen = (halfExtent[i] + halfExtent[j]) - abs(ca - cb)
+                            guard pen.x > 0, pen.y > 0, pen.z > 0 else { continue }
+                            let vol = pen.x * pen.y * pen.z
+                            if vol > worstVol {
+                                var k = 0
+                                if pen.y < pen.x { k = 1 }
+                                if pen.z < pen[k] { k = 2 }
+                                worstVol = vol
+                                worstPen = pen
+                                sign = ca[k] >= cb[k] ? 1 : -1
+                            }
+                        }
+                    }
+                    guard worstVol > 0 else { continue }
+                    var k = 0
+                    if worstPen.y < worstPen.x { k = 1 }
+                    if worstPen.z < worstPen[k] { k = 2 }
+                    let clear = worstPen[k] + epsilon
+                    if ra == anchorRoot {
+                        var o = offB; o[k] -= sign * clear; groupOffset[rb] = o
+                    } else if rb == anchorRoot {
+                        var o = offA; o[k] += sign * clear; groupOffset[ra] = o
+                    } else {
+                        var oa = offA; oa[k] += sign * clear * 0.5; groupOffset[ra] = oa
+                        var ob = offB; ob[k] -= sign * clear * 0.5; groupOffset[rb] = ob
+                    }
+                    moved = true
+                }
+            }
+            if !moved { break }
+        }
+
+        var offsets = [SIMD3<Float>](repeating: .zero, count: n)
+        for i in 0..<n { offsets[i] = groupOffset[find(i)] ?? .zero }
+
+        // Bounding radius once fully exploded, so the camera can pull back to
+        // keep the opened-up assembly in frame.
+        var explodedRadius = radius
+        for i in 0..<n {
+            let farCorner = abs(baseCenter[i] + offsets[i]) + halfExtent[i]
+            explodedRadius = max(explodedRadius, simd_length(farCorner))
+        }
+
+        return (offsets.map { SCNVector3($0.x, $0.y, $0.z) }, explodedRadius)
     }
 
     static func scene(from source: StepSceneSource, options: StepSceneLoader.Options) throws -> SCNScene {
@@ -484,13 +707,28 @@ private enum StepSceneBuilder {
         let scene = SCNScene()
         scene.background.contents = StepPreviewAppearance.backgroundColor
         StepSceneMetadata.setModelRadius(radius, on: scene.rootNode)
+        // Capture physical (pre-normalization) extents before the mesh is
+        // rescaled to `targetSize`; this is the only surviving record of the
+        // model's real dimensions in STEP units (mm).
+        StepSceneMetadata.setModelBounds(
+            min: SCNVector3(bounds.minX, bounds.minY, bounds.minZ),
+            max: SCNVector3(bounds.maxX, bounds.maxY, bounds.maxZ),
+            on: scene.rootNode
+        )
 
         let modelRoot = SCNNode()
         modelRoot.name = StepSceneMetadata.modelRootName
         scene.rootNode.addChildNode(modelRoot)
 
         let sharedMaterial = material()
-        let maxSpread = slices.count > 1 ? radius * 0.75 : 0
+        let explosion = explosionOffsets(
+            slices: slices,
+            modelBounds: bounds,
+            scaleFactor: scaleFactor,
+            radius: radius
+        )
+        let partOffsets = explosion.offsets
+        StepSceneMetadata.setExplodedRadius(explosion.explodedRadius, on: scene.rootNode)
         var convertedColors: [UInt64: (Float, Float, Float)] = [:]
         for (index, slice) in slices.enumerated() {
             var sources = [
@@ -517,15 +755,9 @@ private enum StepSceneBuilder {
             let node = SCNNode(geometry: geometry)
             node.name = "step-part-\(index)"
             node.castsShadow = false
-            let center = partCenter(slice: slice, modelBounds: bounds, scaleFactor: scaleFactor)
-            let direction = explosionDirection(center: center, partIndex: index)
             StepSceneMetadata.setExplosion(
                 basePosition: SCNVector3Zero,
-                offset: SCNVector3(
-                    Float(direction.x) * maxSpread,
-                    Float(direction.y) * maxSpread,
-                    Float(direction.z) * maxSpread
-                ),
+                offset: partOffsets[index],
                 on: node
             )
             modelRoot.addChildNode(node)

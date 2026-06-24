@@ -354,6 +354,16 @@ static bool transferStep(STEPCAFControl_Reader &reader,
 
     RootShape root{label, shape, {}};
     collectLeafComponentShapes(label, TopLoc_Location(), root.componentShapes);
+    if (root.componentShapes.empty()) {
+      // Not an assembly: treat each solid body as its own part, so a multi-body
+      // STEP product (20 solids under one product, no assembly hierarchy — e.g.
+      // a connector molded as separate bodies) is still explodable instead of
+      // collapsing into a single un-explodable mesh.
+      for (TopExp_Explorer exSolid(shape, TopAbs_SOLID); exSolid.More();
+           exSolid.Next()) {
+        root.componentShapes.push_back(exSolid.Current());
+      }
+    }
     leafComponentCount += root.componentShapes.size();
     roots.push_back(std::move(root));
   }

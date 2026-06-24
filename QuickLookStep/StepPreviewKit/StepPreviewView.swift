@@ -8,10 +8,24 @@ public enum StepPreviewAppearance {
     public static let backgroundColor = NSColor(calibratedWhite: 0.055, alpha: 1)
 }
 
+/// What a preview view does with mouse-wheel / trackpad-scroll events.
+public enum StepScrollWheelBehavior: Sendable, Equatable {
+    /// The wheel dollies (and trackpad two-finger scroll pans) the camera —
+    /// the default interactive single-model preview.
+    case camera
+    /// The wheel is handed to the next responder instead, so an enclosing
+    /// scroll view keeps scrolling even while the pointer is over a model
+    /// (e.g. a grid of live tiles). Drag-to-orbit still works.
+    case forwardToNextResponder
+}
+
 enum StepSceneMetadata {
     static let modelRootName = "step-model-root"
 
     nonisolated(unsafe) private static var modelRadiusKey: UInt8 = 0
+    nonisolated(unsafe) private static var explodedRadiusKey: UInt8 = 0
+    nonisolated(unsafe) private static var modelBoundsMinKey: UInt8 = 0
+    nonisolated(unsafe) private static var modelBoundsMaxKey: UInt8 = 0
     nonisolated(unsafe) private static var explosionBasePositionKey: UInt8 = 0
     nonisolated(unsafe) private static var explosionOffsetKey: UInt8 = 0
 
@@ -26,6 +40,42 @@ enum StepSceneMetadata {
 
     static func modelRadius(on node: SCNNode) -> Float? {
         (objc_getAssociatedObject(node, &modelRadiusKey) as? NSNumber)?.floatValue
+    }
+
+    /// Bounding radius of the assembly when fully exploded — used to pull the
+    /// camera back so the opened-up model stays framed.
+    static func setExplodedRadius(_ radius: Float, on node: SCNNode) {
+        objc_setAssociatedObject(
+            node,
+            &explodedRadiusKey,
+            NSNumber(value: radius),
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+    }
+
+    static func explodedRadius(on node: SCNNode) -> Float? {
+        (objc_getAssociatedObject(node, &explodedRadiusKey) as? NSNumber)?.floatValue
+    }
+
+    /// The model's axis-aligned bounds in original STEP units (mm), captured
+    /// before the render mesh is normalized to a fixed on-screen size. This is
+    /// the only place physical dimensions survive — the geometry nodes are
+    /// rescaled, so their `boundingBox` is in display units, not mm.
+    static func setModelBounds(min: SCNVector3, max: SCNVector3, on node: SCNNode) {
+        objc_setAssociatedObject(
+            node, &modelBoundsMinKey, NSValue(scnVector3: min), .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+        objc_setAssociatedObject(
+            node, &modelBoundsMaxKey, NSValue(scnVector3: max), .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+    }
+
+    static func modelBounds(on node: SCNNode) -> (min: SCNVector3, max: SCNVector3)? {
+        guard let min = objc_getAssociatedObject(node, &modelBoundsMinKey) as? NSValue,
+              let max = objc_getAssociatedObject(node, &modelBoundsMaxKey) as? NSValue else {
+            return nil
+        }
+        return (min.scnVector3Value, max.scnVector3Value)
     }
 
     static func setExplosion(basePosition: SCNVector3, offset: SCNVector3, on node: SCNNode) {
@@ -72,6 +122,16 @@ final class StepOrbitCameraRig {
             target: target,
             worldUp: SIMD3<Float>(0, 1, 0)
         )
+        apply(to: cameraNode)
+    }
+
+    /// Re-frame the current view to fit `modelRadius`, changing only the camera
+    /// distance — the orbit rotation and pan target are preserved. Matches the
+    /// framing geometry used by `reset(...)`.
+    func setFramingDistance(modelRadius: Float, fieldOfView: CGFloat, cameraNode: SCNNode) {
+        let fovRadians = max(Float(fieldOfView) * .pi / 360.0, 0.001)
+        let axisDistance = max(modelRadius / tanf(fovRadians), 1)
+        distance = max(axisDistance * sqrtf(3), 1)
         apply(to: cameraNode)
     }
 
@@ -149,6 +209,13 @@ public final class StepPreviewSceneView: SCNView {
     private var activeDragLocation: CGPoint?
     private var activeDragButton: Int?
 
+    /// Whether the wheel drives the camera or is forwarded up the responder
+    /// chain. Defaults to `.camera` so a standalone preview keeps zooming.
+    public var scrollWheelBehavior: StepScrollWheelBehavior = .camera
+
+    /// Current explosion fraction, so camera framing can track it.
+    private var explosionAmount: Float = 0
+
     var cameraRigForTesting: StepOrbitCameraRig { cameraRig }
 
     public override func mouseDown(with event: NSEvent) {
@@ -192,6 +259,10 @@ public final class StepPreviewSceneView: SCNView {
     }
 
     public override func scrollWheel(with event: NSEvent) {
+        if scrollWheelBehavior == .forwardToNextResponder {
+            nextResponder?.scrollWheel(with: event)
+            return
+        }
         guard let cameraNode = pointOfView else {
             super.scrollWheel(with: event)
             return
@@ -271,10 +342,35 @@ public final class StepPreviewSceneView: SCNView {
         }
         cameraRig.reset(
             cameraNode: cameraNode,
-            modelRadius: StepPreviewView.modelRadius(in: scene),
+            modelRadius: framingRadius(in: scene),
             fieldOfView: camera.fieldOfView
         )
         pointOfView = cameraNode
+    }
+
+    /// Track the explosion fraction and pull the camera back to keep the
+    /// opening-up assembly framed, leaving the user's orbit angle untouched.
+    func updateExplosionFraming(_ amount: Float) {
+        explosionAmount = min(max(amount, 0), 1)
+        guard let scene,
+              let cameraNode = scene.rootNode.childNode(withName: "camera", recursively: true),
+              let camera = cameraNode.camera else {
+            return
+        }
+        cameraRig.setFramingDistance(
+            modelRadius: framingRadius(in: scene),
+            fieldOfView: camera.fieldOfView,
+            cameraNode: cameraNode
+        )
+        pointOfView = cameraNode
+    }
+
+    /// Radius to frame for the current explosion amount — interpolated between
+    /// the assembled and fully-exploded bounding radii.
+    private func framingRadius(in scene: SCNScene) -> Float {
+        let assembled = StepPreviewView.modelRadius(in: scene)
+        let exploded = max(StepSceneMetadata.explodedRadius(on: scene.rootNode) ?? assembled, assembled)
+        return assembled + (exploded - assembled) * explosionAmount
     }
 
     private func beginDrag(with event: NSEvent, button: Int) {
@@ -312,6 +408,12 @@ public final class StepPreviewContainerView: NSView {
     public var showsExplosionControls: Bool = true {
         didSet {
             updateExplosionControlsVisibility()
+        }
+    }
+
+    public var scrollWheelBehavior: StepScrollWheelBehavior = .camera {
+        didSet {
+            sceneView.scrollWheelBehavior = scrollWheelBehavior
         }
     }
 
@@ -364,6 +466,7 @@ public final class StepPreviewContainerView: NSView {
             explodeSlider.floatValue = clamped
         }
         StepPreviewView.setExplosionAmount(clamped, in: sceneView)
+        sceneView.updateExplosionFraming(clamped)
     }
 
     private func commonInit() {
@@ -434,7 +537,7 @@ public final class StepPreviewContainerView: NSView {
     }
 
     @objc private func explosionSliderChanged(_ sender: NSSlider) {
-        StepPreviewView.setExplosionAmount(sender.floatValue, in: sceneView)
+        setExplosionAmount(sender.floatValue)
     }
 }
 
@@ -442,15 +545,18 @@ public struct StepPreviewView: NSViewRepresentable {
     public var scene: SCNScene?
     public var explosionAmount: Float
     public var showsExplosionControls: Bool
+    public var scrollWheelBehavior: StepScrollWheelBehavior
 
     public init(
         scene: SCNScene?,
         explosionAmount: Float = 0,
-        showsExplosionControls: Bool = true
+        showsExplosionControls: Bool = true,
+        scrollWheelBehavior: StepScrollWheelBehavior = .camera
     ) {
         self.scene = scene
         self.explosionAmount = explosionAmount
         self.showsExplosionControls = showsExplosionControls
+        self.scrollWheelBehavior = scrollWheelBehavior
     }
 
     public static func configure(_ scnView: SCNView) {
@@ -603,6 +709,7 @@ public struct StepPreviewView: NSViewRepresentable {
     public func makeNSView(context: Context) -> StepPreviewContainerView {
         let view = StepPreviewContainerView(frame: .zero)
         view.showsExplosionControls = showsExplosionControls
+        view.scrollWheelBehavior = scrollWheelBehavior
         view.display(scene)
         view.setExplosionAmount(explosionAmount)
         context.coordinator.displayedScene = scene
@@ -612,6 +719,7 @@ public struct StepPreviewView: NSViewRepresentable {
 
     public func updateNSView(_ nsView: StepPreviewContainerView, context: Context) {
         nsView.showsExplosionControls = showsExplosionControls
+        nsView.scrollWheelBehavior = scrollWheelBehavior
         if context.coordinator.displayedScene !== scene {
             nsView.display(scene)
             context.coordinator.displayedScene = scene

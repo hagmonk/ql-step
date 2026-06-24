@@ -303,6 +303,51 @@ final class StepPreviewKitTests: XCTestCase {
         XCTAssertEqual(moved, parts.count > 1)
     }
 
+    func testFullExplosionSeparatesInterpenetratingParts() throws {
+        let scene = try StepSceneLoader.scene(fromFileAt: try fixtureURL())
+        let parts = partNodes(in: scene)
+        try XCTSkipIf(parts.count < 2, "needs a multi-part assembly")
+
+        // Assembled, the parts interpenetrate (it's a real nested assembly)...
+        StepPreviewView.setExplosionAmount(0, in: scene)
+        XCTAssertGreaterThan(overlappingPairCount(parts, in: scene), 0)
+
+        // ...and a full explosion must pull every part clear of every other —
+        // no residual overlaps, even for co-axial parts that a naive uniform
+        // radial push would leave stacked.
+        StepPreviewView.setExplosionAmount(1, in: scene)
+        XCTAssertEqual(overlappingPairCount(parts, in: scene), 0)
+
+        // The explosion should spread parts across all three dimensions, not
+        // string them along one axis — guard against a 1-D-collapse regression.
+        let extent = explodedExtent(parts, in: scene)
+        let longest = max(extent.x, max(extent.y, extent.z))
+        let shortest = min(extent.x, min(extent.y, extent.z))
+        XCTAssertLessThan(longest / shortest, 4.0, "exploded assembly is too elongated")
+    }
+
+    @MainActor
+    func testExplosionPullsCameraBackPreservingOrbit() throws {
+        let scene = try StepSceneLoader.scene(fromFileAt: try fixtureURL())
+        try XCTSkipIf(partNodes(in: scene).count < 2, "needs a multi-part assembly")
+
+        let view = StepPreviewView.configuredSceneView() as! StepPreviewSceneView
+        StepPreviewView.display(scene, in: view)
+
+        // Orbit a bit; the explosion re-framing must not disturb the angle.
+        view.handleDrag(deltaX: 40, deltaY: 25, modifierFlags: [], cameraNode: view.pointOfView!)
+        let orbitBefore = view.cameraRigForTesting.accumulatedPitchRadians
+
+        view.updateExplosionFraming(0)
+        let assembledDistance = view.cameraRigForTesting.distance
+
+        view.updateExplosionFraming(1)
+        let explodedDistance = view.cameraRigForTesting.distance
+
+        XCTAssertGreaterThan(explodedDistance, assembledDistance, "camera should pull back when exploded")
+        XCTAssertEqual(view.cameraRigForTesting.accumulatedPitchRadians, orbitBefore, accuracy: 0.0001)
+    }
+
     func testThumbnailRenderingClearsExplodedState() throws {
         let scene = try StepSceneLoader.scene(fromFileAt: try fixtureURL())
         StepPreviewView.setExplosionAmount(1, in: scene)
@@ -312,6 +357,72 @@ final class StepPreviewKitTests: XCTestCase {
         for node in partNodes(in: scene) {
             assertEqual(node.position, SCNVector3Zero)
         }
+    }
+
+    func testModelBoundsReportPhysicalExtentsIndependentOfRenderNormalization() throws {
+        let scene = try StepSceneLoader.scene(fromFileAt: try fixtureURL())
+        let bounds = try XCTUnwrap(StepSceneLoader.modelBounds(in: scene))
+
+        // Physical extents are positive and finite...
+        XCTAssertGreaterThan(bounds.dx, 0)
+        XCTAssertGreaterThan(bounds.dy, 0)
+        XCTAssertGreaterThan(bounds.dz, 0)
+        XCTAssertTrue(bounds.maxExtent.isFinite)
+
+        // ...and are independent of tessellation — the physical size is the same
+        // whether rendered at full or coarse fidelity.
+        let coarse = try XCTUnwrap(
+            StepSceneLoader.modelBounds(in: try StepSceneLoader.scene(fromFileAt: try fixtureURL(), options: .fastPreview))
+        )
+        XCTAssertEqual(coarse.maxExtent, bounds.maxExtent, accuracy: 0.0001)
+
+        // The render mesh is normalized so the *whole model's* longest side is a
+        // fixed 100 display units; the physical bounds are a separate quantity.
+        let renderLongestSide = wholeModelRenderLongestSide(in: scene)
+        XCTAssertEqual(renderLongestSide, 100, accuracy: 0.5)
+        XCTAssertNotEqual(bounds.maxExtent, Double(renderLongestSide), accuracy: 0.5)
+    }
+
+    func testModelBoundsAccessorMath() {
+        let scene = SCNScene()
+        StepSceneMetadata.setModelBounds(
+            min: SCNVector3(-1, -2, -3),
+            max: SCNVector3(9, 8, 7),
+            on: scene.rootNode
+        )
+
+        let bounds = StepSceneLoader.modelBounds(in: scene)
+
+        XCTAssertEqual(bounds?.dx ?? 0, 10, accuracy: 0.0001)
+        XCTAssertEqual(bounds?.dy ?? 0, 10, accuracy: 0.0001)
+        XCTAssertEqual(bounds?.dz ?? 0, 10, accuracy: 0.0001)
+    }
+
+    func testModelBoundsAbsentForForeignScene() {
+        XCTAssertNil(StepSceneLoader.modelBounds(in: SCNScene()))
+    }
+
+    @MainActor
+    func testForwardToNextResponderSendsScrollUpTheChain() throws {
+        let parent = ScrollRecordingView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        let view = StepPreviewView.configuredSceneView() as! StepPreviewSceneView
+        parent.addSubview(view)   // an NSView's nextResponder is its superview
+        view.scrollWheelBehavior = .forwardToNextResponder
+
+        let event = try XCTUnwrap(scrollWheelEvent(), "couldn't synthesize a scroll event")
+        view.scrollWheel(with: event)
+
+        XCTAssertEqual(parent.scrollCount, 1)
+    }
+
+    @MainActor
+    func testContainerPlumbsScrollWheelBehaviorToSceneView() {
+        let view = StepPreviewContainerView(frame: .zero)
+        XCTAssertEqual(view.sceneView.scrollWheelBehavior, .camera)
+
+        view.scrollWheelBehavior = .forwardToNextResponder
+
+        XCTAssertEqual(view.sceneView.scrollWheelBehavior, .forwardToNextResponder)
     }
 
     func testInvalidMemoryInputThrows() {
@@ -412,6 +523,54 @@ final class StepPreviewKitTests: XCTestCase {
         return scene
     }
 
+    /// Number of part pairs whose world-space axis-aligned bounding boxes
+    /// intersect at the parts' current (possibly exploded) positions.
+    private func overlappingPairCount(_ parts: [SCNNode], in scene: SCNScene) -> Int {
+        let boxes = parts.map { worldAABB($0, in: scene) }
+        var count = 0
+        for i in 0..<boxes.count {
+            for j in (i + 1)..<boxes.count where aabbsOverlap(boxes[i], boxes[j]) {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    /// Overall bounding-box extent (width, height, depth) spanned by the parts
+    /// at their current positions, in world space.
+    private func explodedExtent(_ parts: [SCNNode], in scene: SCNScene) -> SCNVector3 {
+        var lo = SCNVector3(CGFloat.greatestFiniteMagnitude, .greatestFiniteMagnitude, .greatestFiniteMagnitude)
+        var hi = SCNVector3(-CGFloat.greatestFiniteMagnitude, -.greatestFiniteMagnitude, -.greatestFiniteMagnitude)
+        for part in parts {
+            let box = worldAABB(part, in: scene)
+            lo = SCNVector3(min(lo.x, box.lo.x), min(lo.y, box.lo.y), min(lo.z, box.lo.z))
+            hi = SCNVector3(max(hi.x, box.hi.x), max(hi.y, box.hi.y), max(hi.z, box.hi.z))
+        }
+        return SCNVector3(hi.x - lo.x, hi.y - lo.y, hi.z - lo.z)
+    }
+
+    private func worldAABB(_ node: SCNNode, in scene: SCNScene) -> (lo: SCNVector3, hi: SCNVector3) {
+        let (blo, bhi) = node.boundingBox
+        var lo = SCNVector3(CGFloat.greatestFiniteMagnitude, .greatestFiniteMagnitude, .greatestFiniteMagnitude)
+        var hi = SCNVector3(-CGFloat.greatestFiniteMagnitude, -.greatestFiniteMagnitude, -.greatestFiniteMagnitude)
+        for cx in [blo.x, bhi.x] {
+            for cy in [blo.y, bhi.y] {
+                for cz in [blo.z, bhi.z] {
+                    let w = node.convertPosition(SCNVector3(cx, cy, cz), to: scene.rootNode)
+                    lo = SCNVector3(min(lo.x, w.x), min(lo.y, w.y), min(lo.z, w.z))
+                    hi = SCNVector3(max(hi.x, w.x), max(hi.y, w.y), max(hi.z, w.z))
+                }
+            }
+        }
+        return (lo, hi)
+    }
+
+    private func aabbsOverlap(_ a: (lo: SCNVector3, hi: SCNVector3), _ b: (lo: SCNVector3, hi: SCNVector3)) -> Bool {
+        a.lo.x <= b.hi.x && b.lo.x <= a.hi.x &&
+        a.lo.y <= b.hi.y && b.lo.y <= a.hi.y &&
+        a.lo.z <= b.hi.z && b.lo.z <= a.hi.z
+    }
+
     private func length(_ vector: SCNVector3) -> Float {
         let x = Float(vector.x)
         let y = Float(vector.y)
@@ -438,4 +597,46 @@ final class StepPreviewKitTests: XCTestCase {
                 count + (node.geometry?.elements.reduce(0) { $0 + $1.primitiveCount } ?? 0)
             }
     }
+
+    /// The longest side of the whole model's render bounding box, in display
+    /// units — aggregated across all part nodes in root-node space (the loader
+    /// normalizes the assembly, not each part, to a fixed size).
+    private func wholeModelRenderLongestSide(in scene: SCNScene) -> Float {
+        var lo = SCNVector3(Float.greatestFiniteMagnitude, .greatestFiniteMagnitude, .greatestFiniteMagnitude)
+        var hi = SCNVector3(-Float.greatestFiniteMagnitude, -.greatestFiniteMagnitude, -.greatestFiniteMagnitude)
+        for node in partNodes(in: scene) {
+            let (nlo, nhi) = node.boundingBox
+            let corners = [
+                SCNVector3(nlo.x, nlo.y, nlo.z), SCNVector3(nlo.x, nlo.y, nhi.z),
+                SCNVector3(nlo.x, nhi.y, nlo.z), SCNVector3(nlo.x, nhi.y, nhi.z),
+                SCNVector3(nhi.x, nlo.y, nlo.z), SCNVector3(nhi.x, nlo.y, nhi.z),
+                SCNVector3(nhi.x, nhi.y, nlo.z), SCNVector3(nhi.x, nhi.y, nhi.z)
+            ]
+            for corner in corners {
+                let w = node.convertPosition(corner, to: scene.rootNode)
+                lo = SCNVector3(min(lo.x, w.x), min(lo.y, w.y), min(lo.z, w.z))
+                hi = SCNVector3(max(hi.x, w.x), max(hi.y, w.y), max(hi.z, w.z))
+            }
+        }
+        return max(Float(hi.x - lo.x), max(Float(hi.y - lo.y), Float(hi.z - lo.z)))
+    }
+
+    private func scrollWheelEvent() -> NSEvent? {
+        guard let cg = CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: .pixel,
+            wheelCount: 1,
+            wheel1: 10,
+            wheel2: 0,
+            wheel3: 0
+        ) else { return nil }
+        return NSEvent(cgEvent: cg)
+    }
+}
+
+/// Records how many scroll-wheel events reach it, so a forwarding child view's
+/// behavior can be asserted.
+private final class ScrollRecordingView: NSView {
+    private(set) var scrollCount = 0
+    override func scrollWheel(with event: NSEvent) { scrollCount += 1 }
 }
