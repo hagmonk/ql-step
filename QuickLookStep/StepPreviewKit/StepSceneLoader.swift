@@ -562,6 +562,30 @@ private enum StepSceneBuilder {
             return dist
         }
 
+        // How many *other parts* a box rakes through to clear itself along
+        // (axis a, sign s): for every part inside the tunnel the box carves as it
+        // moves, the fraction of *that part* swept through. Normalizing by each
+        // part's own size is essential — a big part plowing down through ten tiny
+        // contacts sweeps little absolute volume but is visually the worst case,
+        // so it must score high. "Move the top of a stack down through the
+        // bottom" costs ~1 (a whole part pierced); moving up costs ~0.
+        func clipCost(boxLo: SIMD3<Float>, boxHi: SIMD3<Float>,
+                      members: Set<Int>, axis a: Int, sign s: Float) -> Float {
+            let distance = escapeDistance(boxLo: boxLo, boxHi: boxHi, members: members, axis: a, sign: s)
+            var tunnelLo = boxLo, tunnelHi = boxHi
+            if s > 0 { tunnelHi[a] += distance } else { tunnelLo[a] -= distance }
+            var cost: Float = 0
+            for j in 0..<n where !members.contains(j) {
+                let ox = min(tunnelHi.x, hi[j].x) - max(tunnelLo.x, lo[j].x)
+                let oy = min(tunnelHi.y, hi[j].y) - max(tunnelLo.y, lo[j].y)
+                let oz = min(tunnelHi.z, hi[j].z) - max(tunnelLo.z, lo[j].z)
+                guard ox > 0, oy > 0, oz > 0 else { continue }
+                let partVolume = (hi[j].x - lo[j].x) * (hi[j].y - lo[j].y) * (hi[j].z - lo[j].z)
+                cost += (ox * oy * oz) / max(partVolume, 1)
+            }
+            return cost
+        }
+
         var groupOffset: [Int: SIMD3<Float>] = [:]
         for (root, members) in groupMembers {
             if root == anchorRoot { groupOffset[root] = .zero; continue }
@@ -570,23 +594,56 @@ private enum StepSceneBuilder {
             for m in members { gLo = simd_min(gLo, lo[m]); gHi = simd_max(gHi, hi[m]) }
             let memberSet = Set(members)
             let hint = (gLo + gHi) * 0.5
-            var bestDistance = Float.greatestFiniteMagnitude
-            var bestAlignment = -Float.greatestFiniteMagnitude
-            var bestDirection = SIMD3<Float>(0, 0, 0)
+
+            // Rod-like part? (markedly elongated and small — a screw, pin, or
+            // contact.) Judged from a single *part's* shape, not the group's union
+            // box: a row of cubic parts has an elongated union but isn't a rod.
+            // The "small" gate keeps large structural rails on normal blocking.
+            let memberExt = halfExtent[members[0]] * 2
+            let axesByExtent = [0, 1, 2].sorted { memberExt[$0] < memberExt[$1] }
+            let longAxis = axesByExtent[2]
+            let isAxialShape = memberExt[longAxis] > 1.6 * memberExt[axesByExtent[1]]
+                && memberExt[longAxis] < 0.5 * modelMax
+
+            // Score every axis-aligned direction. The PRIMARY criterion is
+            // clipping — how much other-part material the box sweeps through to
+            // get out that way — then travel distance, then the radial hint. This
+            // is what stops a stacked part being driven down through the one
+            // beneath it: "down" sweeps through that whole part, "up" through
+            // nothing, so "up" wins regardless of which is the shorter clear.
+            var candidates: [(clip: Float, distance: Float, alignment: Float, direction: SIMD3<Float>)] = []
             for a in 0..<3 {
                 for s in [Float(1), Float(-1)] {
-                    let distance = escapeDistance(boxLo: gLo, boxHi: gHi, members: memberSet, axis: a, sign: s)
-                    let direction = unit(a) * s
-                    let alignment = simd_dot(direction, hint)
-                    if distance < bestDistance - tieTolerance
-                        || (distance < bestDistance + tieTolerance && alignment > bestAlignment) {
-                        bestDistance = min(bestDistance, distance)
-                        bestAlignment = alignment
-                        bestDirection = direction
-                    }
+                    let dir = unit(a) * s
+                    candidates.append((
+                        clip: clipCost(boxLo: gLo, boxHi: gHi, members: memberSet, axis: a, sign: s),
+                        distance: escapeDistance(boxLo: gLo, boxHi: gHi, members: memberSet, axis: a, sign: s),
+                        alignment: simd_dot(dir, hint),
+                        direction: dir
+                    ))
                 }
             }
-            groupOffset[root] = bestDirection * (bestDistance + spread)
+            // Clip is in "parts pierced" units now, so tolerance is a fraction of
+            // one part: directions that rake through < ~a third of a part more
+            // than the best are treated as tied and decided by distance/hint.
+            let clipTol: Float = 0.34
+            func rankKey(_ c: (clip: Float, distance: Float, alignment: Float, direction: SIMD3<Float>)) -> (Float, Float, Float) {
+                ((c.clip / clipTol).rounded(), (c.distance / tieTolerance).rounded(), -c.alignment)
+            }
+            let clipBest = candidates.min { rankKey($0) < rankKey($1) }!
+
+            // A rod (screw/pin/contact) disassembles along its long axis, toward
+            // its exterior end — bounding boxes can't see the hole it passes
+            // through, so this geometric prior is needed. But only take that path
+            // when it isn't drastically farther than just popping out the nearest
+            // face, else a part buried mid-body knifes lengthwise through it.
+            let axialBest = candidates
+                .filter { abs($0.direction[longAxis]) > 0.5 }
+                .max { ($0.alignment, -$0.distance) < ($1.alignment, -$1.distance) }
+            let useAxial = isAxialShape && axialBest != nil
+                && axialBest!.distance <= 2.5 * clipBest.distance + tieTolerance
+            let chosen = useAxial ? axialBest! : clipBest
+            groupOffset[root] = chosen.direction * (chosen.distance + spread)
         }
 
         // --- Relax overlapping groups (whole groups move, so arrays stay rigid) -
