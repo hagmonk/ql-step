@@ -181,7 +181,7 @@ doesn't pay for `NSLog` on every scene.
 
 ## Requirements
 
-* macOS 14.6 (Sonoma) or newer, Apple Silicon
+* macOS 15 (Sequoia) or newer, Apple Silicon
 * Building: Xcode and `brew install opencascade`
 
 ## Building & installing

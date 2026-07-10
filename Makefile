@@ -10,7 +10,7 @@ WARMUPS ?= 1
 .PHONY: occt-bridge
 occt-bridge:
 	clang++ -std=c++17 -O2 -arch arm64 -w -dynamiclib \
-	  -mmacosx-version-min=14.6 \
+	  -mmacosx-version-min=15.0 \
 	  -install_name @rpath/libocctbridge.dylib \
 	  -I$(OCCT_PREFIX)/include/opencascade \
 	  occt-bridge/occt_bridge.cpp \

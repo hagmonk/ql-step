@@ -78,6 +78,23 @@ jobs:
           APP_PATH="$PWD/build/QuickLookStep.xcarchive/Products/Applications/QuickLookStep.app"
           SIGN_IDENTITY="${{ steps.signing.outputs.identity }}" ./occt-bridge/bundle-occt.sh "$APP_PATH"
 
+      # Homebrew bottles inherit the build host's OS floor, and that floor has
+      # silently moved before (sequoia -> tahoe-only). Fail loudly if any
+      # bundled dylib demands a newer macOS than the app advertises.
+      - name: Verify bundled dylib min OS
+        run: |
+          APP_PATH="$PWD/build/QuickLookStep.xcarchive/Products/Applications/QuickLookStep.app"
+          TARGET="15.0"
+          fail=0
+          for f in "$APP_PATH"/Contents/Frameworks/*.dylib; do
+            minos=$(otool -l "$f" | awk '/minos/{print $2; exit}')
+            if [ "$(printf '%s\n' "$TARGET" "$minos" | sort -V | tail -1)" != "$TARGET" ]; then
+              echo "::error::$(basename "$f") requires macOS $minos > deployment target $TARGET"
+              fail=1
+            fi
+          done
+          exit $fail
+
       - name: Determine version
         id: version
         run: |
