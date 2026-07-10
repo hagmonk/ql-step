@@ -29,8 +29,24 @@ jobs:
       - name: Install OpenCascade
         run: brew install opencascade
 
+      # Secrets are absent on PRs (fork isolation) and before the Developer ID
+      # cert is provisioned; either way we fall back to an ad-hoc build that
+      # still exercises the full bridge/bundle pipeline.
+      - name: Determine signing mode
+        id: signing
+        run: |
+          if [ "${{ github.event_name != 'pull_request' && secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}" = "true" ]; then
+            echo "identity=Developer ID Application" >> "$GITHUB_OUTPUT"
+          else
+            if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+              echo "::error::release tag build but signing secrets are not configured; refusing to publish an ad-hoc release"
+              exit 1
+            fi
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Import signing certificate
-        if: github.event_name != 'pull_request'
+        if: steps.signing.outputs.identity != '-'
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
@@ -41,10 +57,11 @@ jobs:
 
       - name: Archive
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          IDENTITY="${{ steps.signing.outputs.identity }}"
+          if [ "$IDENTITY" = "-" ]; then
             SIGN_ARGS=("CODE_SIGN_IDENTITY=-" "CODE_SIGN_STYLE=Manual" "DEVELOPMENT_TEAM=")
           else
-            SIGN_ARGS=("CODE_SIGN_IDENTITY=Developer ID Application" "CODE_SIGN_STYLE=Manual")
+            SIGN_ARGS=("CODE_SIGN_IDENTITY=$IDENTITY" "CODE_SIGN_STYLE=Manual")
           fi
           xcodebuild \
             -project QuickLookStep/QuickLookStep.xcodeproj \
@@ -59,11 +76,7 @@ jobs:
       - name: Bundle OCCT dylibs
         run: |
           APP_PATH="$PWD/build/QuickLookStep.xcarchive/Products/Applications/QuickLookStep.app"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SIGN_IDENTITY=- ./occt-bridge/bundle-occt.sh "$APP_PATH"
-          else
-            SIGN_IDENTITY="Developer ID Application" ./occt-bridge/bundle-occt.sh "$APP_PATH"
-          fi
+          SIGN_IDENTITY="${{ steps.signing.outputs.identity }}" ./occt-bridge/bundle-occt.sh "$APP_PATH"
 
       - name: Determine version
         id: version
@@ -73,7 +86,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Notarize
-        if: github.event_name != 'pull_request'
+        if: steps.signing.outputs.identity != '-'
         env:
           APPSTORE_CONNECT_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
           APPSTORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
