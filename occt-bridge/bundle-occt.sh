@@ -1,12 +1,22 @@
 #!/bin/bash
 # Bundles libocctbridge.dylib and its transitive OpenCascade/Homebrew dylib
 # closure into an app bundle's Contents/Frameworks, rewrites absolute
-# Homebrew paths to @rpath, and ad-hoc signs everything (innermost-first).
+# Homebrew paths to @rpath, and re-signs everything (innermost-first).
 #
-# usage: bundle-occt.sh <path-to-app-bundle>
+# usage: [SIGN_IDENTITY=<identity>] bundle-occt.sh <path-to-app-bundle>
+#
+# SIGN_IDENTITY defaults to "-" (ad-hoc, local dev). Set it to a Developer ID
+# Application identity for notarizable builds; that path also applies the
+# hardened runtime and a secure timestamp, which notarization requires on
+# every Mach-O in the bundle.
 set -euo pipefail
 
 APP="$1"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+SIGN_FLAGS=()
+if [ "$SIGN_IDENTITY" != "-" ]; then
+    SIGN_FLAGS=(--options runtime --timestamp)
+fi
 BRIDGE_DIR="$(cd "$(dirname "$0")" && pwd)"
 OCCT_LIB="${OCCT_PREFIX:-/opt/homebrew/opt/opencascade}/lib"
 FRAMEWORKS="$APP/Contents/Frameworks"
@@ -41,18 +51,23 @@ done
 # Normalize ids and re-sign every bundled dylib
 for lib in "$FRAMEWORKS"/*.dylib; do
     install_name_tool -id "@rpath/$(basename "$lib")" "$lib" 2>/dev/null
-    codesign --force --sign - "$lib"
+    codesign --force --sign "$SIGN_IDENTITY" "${SIGN_FLAGS[@]+"${SIGN_FLAGS[@]}"}" "$lib"
 done
 
 # Bundle the registration script so installers (e.g. the Homebrew cask
 # postflight) can invoke it from inside the app
 cp -f "$BRIDGE_DIR/../scripts/register-quicklook.sh" "$APP/Contents/Resources/"
 
-# Re-sign inner-out: extensions, then the app. QL extensions must keep their
-# app-sandbox entitlement or pluginkit refuses to launch them.
-for appex in "$APP"/Contents/PlugIns/*.appex; do
-    codesign --force --sign - --preserve-metadata=entitlements "$appex"
+# Re-sign inner-out: nested frameworks, then extensions, then the app. QL
+# extensions must keep their app-sandbox entitlement or pluginkit refuses to
+# launch them.
+for framework in "$APP"/Contents/Frameworks/*.framework; do
+    [ -d "$framework" ] || continue
+    codesign --force --sign "$SIGN_IDENTITY" "${SIGN_FLAGS[@]+"${SIGN_FLAGS[@]}"}" "$framework"
 done
-codesign --force --sign - --preserve-metadata=entitlements "$APP"
+for appex in "$APP"/Contents/PlugIns/*.appex; do
+    codesign --force --sign "$SIGN_IDENTITY" "${SIGN_FLAGS[@]+"${SIGN_FLAGS[@]}"}" --preserve-metadata=entitlements "$appex"
+done
+codesign --force --sign "$SIGN_IDENTITY" "${SIGN_FLAGS[@]+"${SIGN_FLAGS[@]}"}" --preserve-metadata=entitlements "$APP"
 
 echo "bundled $(ls "$FRAMEWORKS" | wc -l | tr -d ' ') dylibs into $FRAMEWORKS"

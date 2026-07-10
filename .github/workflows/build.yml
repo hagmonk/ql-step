@@ -6,7 +6,7 @@ on:
       - main
       - master
     tags:
-      - "release/v*"
+      - "v*"
   pull_request:
   workflow_dispatch:
 
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -26,27 +26,51 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Install OpenCascade
+        run: brew install opencascade
+
       - name: Import signing certificate
         if: github.event_name != 'pull_request'
-        uses: apple-actions/import-codesign-certs@v2
+        uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
+      - name: Build OCCT bridge
+        run: make occt-bridge
+
       - name: Archive
         run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SIGN_ARGS=("CODE_SIGN_IDENTITY=-" "CODE_SIGN_STYLE=Manual" "DEVELOPMENT_TEAM=")
+          else
+            SIGN_ARGS=("CODE_SIGN_IDENTITY=Developer ID Application" "CODE_SIGN_STYLE=Manual")
+          fi
           xcodebuild \
             -project QuickLookStep/QuickLookStep.xcodeproj \
             -scheme QuickLookStep \
             -configuration Release \
             -destination "generic/platform=macOS" \
             -archivePath "$PWD/build/QuickLookStep.xcarchive" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            "${SIGN_ARGS[@]}" \
             archive
 
-      - name: Package app
+      - name: Bundle OCCT dylibs
         run: |
           APP_PATH="$PWD/build/QuickLookStep.xcarchive/Products/Applications/QuickLookStep.app"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$PWD/build/QuickLookStep.zip"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SIGN_IDENTITY=- ./occt-bridge/bundle-occt.sh "$APP_PATH"
+          else
+            SIGN_IDENTITY="Developer ID Application" ./occt-bridge/bundle-occt.sh "$APP_PATH"
+          fi
+
+      - name: Determine version
+        id: version
+        run: |
+          VERSION=$(sed -n 's/.*MARKETING_VERSION = \(.*\);/\1/p' \
+            QuickLookStep/QuickLookStep.xcodeproj/project.pbxproj | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Notarize
         if: github.event_name != 'pull_request'
@@ -55,28 +79,35 @@ jobs:
           APPSTORE_CONNECT_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_API_ISSUER_ID }}
           APPSTORE_CONNECT_API_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_API_PRIVATE_KEY }}
         run: |
+          APP_PATH="$PWD/build/QuickLookStep.xcarchive/Products/Applications/QuickLookStep.app"
           API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPSTORE_CONNECT_API_KEY_ID}.p8"
           echo "$APPSTORE_CONNECT_API_PRIVATE_KEY" > "$API_KEY_PATH"
-          xcrun notarytool submit "$PWD/build/QuickLookStep.zip" \
+          ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
             --key "$API_KEY_PATH" \
             --key-id "$APPSTORE_CONNECT_API_KEY_ID" \
             --issuer "$APPSTORE_CONNECT_API_ISSUER_ID" \
             --wait
+          xcrun stapler staple "$APP_PATH"
 
-      - name: Staple
-        if: github.event_name != 'pull_request'
+      # Zip AFTER stapling so the ticket ships inside the archive and
+      # Gatekeeper passes offline on first launch.
+      - name: Package app
         run: |
           APP_PATH="$PWD/build/QuickLookStep.xcarchive/Products/Applications/QuickLookStep.app"
-          xcrun stapler staple "$APP_PATH"
+          ZIP="$PWD/build/QuickLookStep-${{ steps.version.outputs.version }}.zip"
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP"
+          shasum -a 256 "$ZIP"
 
       - name: Upload app
         uses: actions/upload-artifact@v4
         with:
           name: QuickLookStep
-          path: build/QuickLookStep.zip
+          path: build/QuickLookStep-*.zip
 
       - name: Create GitHub release
-        if: startsWith(github.ref, 'refs/tags/release/v')
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/QuickLookStep.zip
+          files: build/QuickLookStep-*.zip
+          generate_release_notes: true

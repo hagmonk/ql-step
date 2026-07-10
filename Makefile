@@ -60,13 +60,11 @@ install: xcodebuild
 register:
 	./scripts/register-quicklook.sh
 
-# Zip the built app (ditto preserves signatures/xattrs) and publish a GitHub
-# release; prints the sha256 to paste into the Homebrew cask.
+# Tag the current commit with the marketing version and push; CI then builds,
+# Developer ID-signs, notarizes, staples, and publishes the GitHub release
+# (see .github/workflows/build.yml). The sha256 for the Homebrew cask is in
+# the CI "Package app" step output.
 .PHONY: release
-release: xcodebuild
-	ditto -c -k --keepParent $(APP) QuickLookStep-$(VERSION).zip
-	shasum -a 256 QuickLookStep-$(VERSION).zip
-	gh release create v$(VERSION) QuickLookStep-$(VERSION).zip \
-	  --title "v$(VERSION)" --notes "OpenCascade-backed Quick Look previews and thumbnails for STEP files."
-	rm -f QuickLookStep-$(VERSION).zip
-	rm -rf $(APP)   # or pluginkit elects the build-dir appex over /Applications
+release:
+	git tag v$(VERSION)
+	git push origin v$(VERSION)
